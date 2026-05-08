@@ -192,6 +192,7 @@ export type VendorAutoInventorySettings = {
   skuHeader: string;
   inventoryHeader: string;
   subtractiveColumn: string;
+  skuExceptions: string[];
   inventoryMode: VendorAutoInventoryMode;
   inStockPhrases: string[];
   outOfStockPhrases: string[];

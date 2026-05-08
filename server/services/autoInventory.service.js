@@ -132,6 +132,26 @@ function isVendorProductRepresentedInSheet(vendorProduct, sheetSkuKeys) {
   );
 }
 
+function buildSkuExceptionKeys(skuExceptions) {
+  const keys = new Set();
+
+  for (const sku of skuExceptions || []) {
+    addSkuMatchKeys(keys, sku);
+  }
+
+  return keys;
+}
+
+function isVendorProductExcepted(vendorProduct, exceptionKeys) {
+  if (!exceptionKeys || exceptionKeys.size === 0) {
+    return false;
+  }
+
+  return getVendorProductSkuValues(vendorProduct).some((value) =>
+    getSkuMatchKeys(value).some((key) => exceptionKeys.has(key))
+  );
+}
+
 function formatMissingVendorProducts(vendorProducts) {
   const sample = vendorProducts
     .slice(0, 25)
@@ -670,6 +690,7 @@ async function importSheetAttachment({ settings, attachment, message }) {
       settings.vendorId
     );
   const vendorProductLookup = buildVendorProductSkuLookup(vendorProducts);
+  const skuExceptionKeys = buildSkuExceptionKeys(settings.skuExceptions);
 
   for (const row of rows) {
     const sku = findHeaderValue(row, settings.skuHeader);
@@ -774,6 +795,7 @@ async function importSheetAttachment({ settings, attachment, message }) {
 
   const missingVendorProducts = vendorProducts.filter(
     (vendorProduct) =>
+      !isVendorProductExcepted(vendorProduct, skuExceptionKeys) &&
       !isVendorProductRepresentedInSheet(vendorProduct, sheetSkuKeys)
   );
 

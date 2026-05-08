@@ -34,6 +34,7 @@ function getDefaultAutoInventorySettings(
     skuHeader: "",
     inventoryHeader: "",
     subtractiveColumn: "",
+    skuExceptions: [],
     inventoryMode: "numerical",
     inStockPhrases: [],
     outOfStockPhrases: [],
@@ -49,6 +50,17 @@ function parsePhraseText(value: string) {
   return value
     .split(/[,:]/)
     .map((phrase) => phrase.trim())
+    .filter(Boolean);
+}
+
+function formatSkuExceptions(skus: string[]) {
+  return skus.join(", ");
+}
+
+function parseSkuExceptions(value: string) {
+  return value
+    .split(",")
+    .map((sku) => sku.trim())
     .filter(Boolean);
 }
 
@@ -68,6 +80,7 @@ export function VendorsPage({
   const [buildTimeDraft, setBuildTimeDraft] = useState("");
   const [inStockPhraseDraft, setInStockPhraseDraft] = useState("");
   const [outOfStockPhraseDraft, setOutOfStockPhraseDraft] = useState("");
+  const [skuExceptionsDraft, setSkuExceptionsDraft] = useState("");
   const [vendorCurrentPage, setVendorCurrentPage] = useState(1);
   const [vendorSearchInput, setVendorSearchInput] = useState("");
   const [vendorSearchQuery, setVendorSearchQuery] = useState("");
@@ -152,6 +165,7 @@ export function VendorsPage({
     setBuildTimeDraft("");
     setInStockPhraseDraft("");
     setOutOfStockPhraseDraft("");
+    setSkuExceptionsDraft("");
     setVendorSettingsStatus("");
     setAutoInventoryStatus("");
     setIsAutoInventoryModalOpen(false);
@@ -311,6 +325,7 @@ export function VendorsPage({
     setAutoInventoryDraft(nextDraft);
     setInStockPhraseDraft(formatPhraseText(nextDraft.inStockPhrases));
     setOutOfStockPhraseDraft(formatPhraseText(nextDraft.outOfStockPhrases));
+    setSkuExceptionsDraft(formatSkuExceptions(nextDraft.skuExceptions || []));
     setAutoInventoryStatus("");
     setError("");
     setIsAutoInventoryModalOpen(true);
@@ -325,6 +340,7 @@ export function VendorsPage({
     setAutoInventoryDraft(null);
     setInStockPhraseDraft("");
     setOutOfStockPhraseDraft("");
+    setSkuExceptionsDraft("");
     setAutoInventoryStatus("");
   }
 
@@ -354,6 +370,7 @@ export function VendorsPage({
           skuHeader: autoInventoryDraft.skuHeader,
           inventoryHeader: autoInventoryDraft.inventoryHeader,
           subtractiveColumn: autoInventoryDraft.subtractiveColumn,
+          skuExceptions: parseSkuExceptions(skuExceptionsDraft),
           inventoryMode: autoInventoryDraft.inventoryMode,
           inStockPhrases: parsePhraseText(inStockPhraseDraft),
           outOfStockPhrases: parsePhraseText(outOfStockPhraseDraft)
@@ -364,6 +381,7 @@ export function VendorsPage({
       setAutoInventoryDraft(result);
       setInStockPhraseDraft(formatPhraseText(result.inStockPhrases));
       setOutOfStockPhraseDraft(formatPhraseText(result.outOfStockPhrases));
+      setSkuExceptionsDraft(formatSkuExceptions(result.skuExceptions || []));
       setAutoInventoryStatus("Auto inventory settings saved.");
       setIsAutoInventoryModalOpen(false);
     } catch (err) {
@@ -591,6 +609,19 @@ export function VendorsPage({
                 </label>
               </div>
             )}
+
+            <div className="auto-inventory-form-grid">
+              <label>
+                <span>SKU exceptions</span>
+                <input
+                  type="text"
+                  value={skuExceptionsDraft}
+                  placeholder="ABC-123456, XYZ-78910"
+                  disabled={isAutoInventorySaving}
+                  onChange={(event) => setSkuExceptionsDraft(event.target.value)}
+                />
+              </label>
+            </div>
 
             {autoInventoryStatus && (
               <p className="vendor-settings-status">{autoInventoryStatus}</p>
