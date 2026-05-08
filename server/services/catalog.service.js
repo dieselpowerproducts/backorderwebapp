@@ -2856,7 +2856,7 @@ async function runScheduledCatalogSync() {
   const lastLocalDate = await getSyncState("catalog_last_full_sync_local_date");
   const localHourKey = `${localDate}-${String(localHour).padStart(2, "0")}`;
 
-  if (localHour === 0 && lastLocalDate !== localDate) {
+  if (lastLocalDate !== localDate) {
     const result = await runFullSync({ reason: "scheduled-full-sync" });
     await setSyncState("catalog_last_full_sync_local_date", localDate);
     await setSyncState("catalog_last_warehouse_sync_local_hour", localHourKey);
@@ -2899,6 +2899,41 @@ async function runScheduledCatalogSync() {
   };
 }
 
+async function getCatalogSyncStatus() {
+  await initializeSchema();
+  const sql = getSql();
+  const stateRows = await sql`
+    SELECT sync_key, sync_value, updated_at
+    FROM catalog_sync_state
+    ORDER BY sync_key ASC
+  `;
+  const countRows = await sql`
+    SELECT
+      (SELECT COUNT(*)::int FROM catalog_products) AS products,
+      (SELECT COUNT(*)::int FROM catalog_vendors) AS vendors,
+      (SELECT COUNT(*)::int FROM catalog_vendor_products) AS vendor_products,
+      (SELECT COUNT(*)::int FROM catalog_warehouse_stock) AS warehouse_products,
+      (SELECT MAX(last_synced_at) FROM catalog_products) AS products_last_synced_at,
+      (SELECT MAX(last_synced_at) FROM catalog_vendors) AS vendors_last_synced_at,
+      (SELECT MAX(last_synced_at) FROM catalog_vendor_products) AS vendor_products_last_synced_at,
+      (SELECT MAX(last_synced_at) FROM catalog_warehouse_stock) AS warehouse_last_synced_at
+  `;
+  const syncState = stateRows.reduce((state, row) => {
+    state[row.sync_key] = {
+      value: row.sync_value,
+      updatedAt: row.updated_at
+    };
+
+    return state;
+  }, {});
+
+  return {
+    timezone: syncTimezone,
+    syncState,
+    counts: countRows[0] || {}
+  };
+}
+
 async function runScheduledFullSync() {
   return runScheduledCatalogSync();
 }
@@ -2913,6 +2948,7 @@ module.exports = {
   getActiveCatalogVendorProductsByVendorId: queryActiveVendorProductsByVendorId,
   getCatalogVendorProductByVendorAndSku: queryVendorProductByVendorAndSku,
   getCatalogVendorProductById: queryVendorProductById,
+  getCatalogSyncStatus,
   getProductDetails,
   getVendorDetails,
   listProducts,
