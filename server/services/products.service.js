@@ -197,18 +197,19 @@ async function refreshProductDetails(sku, options = {}) {
 async function assignProductVendor({ sku, vendorId }) {
   const safeSku = normalizeRequiredString(sku, "Product SKU is required.");
   const safeVendorId = normalizeRequiredString(vendorId, "Vendor ID is required.");
-  const product = await catalogService.getCatalogProductBySku(safeSku);
-
-  if (!product) {
-    const error = new Error("Product not found.");
-    error.statusCode = 404;
-    throw error;
-  }
 
   await catalogService.getVendorDetails(safeVendorId);
   await catalogService.refreshProductBySku(safeSku, {
     includeWarehouse: false
   });
+
+  const refreshedProduct = await catalogService.getCatalogProductBySku(safeSku);
+
+  if (!refreshedProduct) {
+    const error = new Error("Product not found.");
+    error.statusCode = 404;
+    throw error;
+  }
 
   const existingVendorProduct =
     await catalogService.getCatalogVendorProductByVendorAndSku(
@@ -217,11 +218,11 @@ async function assignProductVendor({ sku, vendorId }) {
     );
 
   if (!existingVendorProduct) {
-    const productSku = product.sku || safeSku;
+    const productSku = refreshedProduct.sku || safeSku;
 
     await createSkuNexusVendorProduct({
       vendorId: safeVendorId,
-      productId: product.id,
+      productId: refreshedProduct.id,
       productSku
     });
   }
