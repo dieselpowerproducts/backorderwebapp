@@ -54,6 +54,75 @@ function formatCsvValue(value) {
   return normalized;
 }
 
+function graphqlString(value) {
+  return JSON.stringify(String(value || ""));
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function fetchSkuNexusVendorProductAssignment({
+  vendorId,
+  productId,
+  productSku
+}) {
+  const data = await skunexus.query(`
+    query V1Queries {
+      vendorProduct {
+        grid(
+          filter: {
+            vendor_id: { operator: eq, value: [${graphqlString(vendorId)}] }
+            product: { sku: { operator: eq, value: [${graphqlString(productSku)}] } }
+          }
+          limit: { size: 25, page: 1 }
+        ) {
+          rows {
+            id
+            vendor_id
+            product_id
+            sku
+            label
+            quantity
+            status
+            price
+          }
+        }
+      }
+    }
+  `);
+
+  return (data?.vendorProduct?.grid?.rows || []).find(
+    (row) =>
+      String(row?.vendor_id || "") === vendorId &&
+      String(row?.product_id || "") === productId
+  );
+}
+
+async function waitForSkuNexusVendorProductAssignment({
+  vendorId,
+  productId,
+  productSku
+}) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const vendorProduct = await fetchSkuNexusVendorProductAssignment({
+      vendorId,
+      productId,
+      productSku
+    });
+
+    if (vendorProduct) {
+      return vendorProduct;
+    }
+
+    await delay(750);
+  }
+
+  return null;
+}
+
 async function createSkuNexusVendorProduct({
   vendorId,
   productId,
@@ -73,7 +142,7 @@ async function createSkuNexusVendorProduct({
     .map((row) => row.map(formatCsvValue).join(","))
     .join("\n")}\n`;
 
-  return skunexus.multipart(
+  const result = await skunexus.multipart(
     `/vendors/${encodeURIComponent(vendorId)}/products-import`,
     {
       files: [
@@ -86,6 +155,24 @@ async function createSkuNexusVendorProduct({
       ]
     }
   );
+  const vendorProduct = await waitForSkuNexusVendorProductAssignment({
+    vendorId,
+    productId,
+    productSku
+  });
+
+  if (!vendorProduct) {
+    const importedCount = Number(result?.imported_count || 0);
+    const error = new Error(
+      importedCount > 0
+        ? "SKU Nexus accepted the vendor import, but the vendor assignment was not available after refresh."
+        : "SKU Nexus did not import this vendor assignment."
+    );
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return vendorProduct;
 }
 
 async function listProducts(queryParams) {
