@@ -11,6 +11,10 @@
       "includeFiles": "server/**",
       "maxDuration": 60
     },
+    "api/cron/catalog-warehouse-sync.js": {
+      "includeFiles": "server/**",
+      "maxDuration": 60
+    },
     "api/cron/auto-inventory.js": {
       "includeFiles": "server/**",
       "maxDuration": 60
@@ -18,8 +22,12 @@
   },
   "crons": [
     {
-      "path": "/api/cron/catalog-full-sync",
+      "path": "/api/cron/catalog-warehouse-sync",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/catalog-full-sync",
+      "schedule": "15 10 * * *"
     },
     {
       "path": "/api/cron/auto-inventory",

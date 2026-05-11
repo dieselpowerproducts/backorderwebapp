@@ -1,9 +1,26 @@
 const notesService = require("../services/notes.service");
+const productsService = require("../services/products.service");
 
 async function listNotes(req, res, next) {
   try {
     const notes = await notesService.getNotesForSku(req.params.sku);
     res.send(notes);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function getNotesBootstrap(req, res, next) {
+  try {
+    const [notes, productDetails] = await Promise.all([
+      notesService.getNotesForSku(req.params.sku),
+      productsService.getProductDetails(req.params.sku)
+    ]);
+
+    res.send({
+      notes,
+      productDetails
+    });
   } catch (err) {
     next(err);
   }
@@ -37,6 +54,7 @@ async function updateNote(req, res, next) {
 }
 
 module.exports = {
+  getNotesBootstrap,
   listNotes,
   createNote,
   deleteNote,

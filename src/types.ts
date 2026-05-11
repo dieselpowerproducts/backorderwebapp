@@ -171,6 +171,11 @@ export type ProductDetails = {
   vendors: ProductVendor[];
 };
 
+export type NotesBootstrapResponse = {
+  notes: Note[];
+  productDetails: ProductDetails;
+};
+
 export type VendorSummary = {
   id: string;
   vendor: string;

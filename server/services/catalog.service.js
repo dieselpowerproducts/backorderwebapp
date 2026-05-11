@@ -2949,59 +2949,54 @@ async function listVendorProducts(vendorId, queryParams = {}) {
   };
 }
 
-async function runScheduledCatalogSync() {
+async function runScheduledFullSync() {
   const { localDate, localHour } = getTimeZoneDateParts(new Date(), syncTimezone);
   const localHourKey = `${localDate}-${String(localHour).padStart(2, "0")}`;
-  const [lastLocalDate, lastWarehouseLocalHour] = await Promise.all([
-    getSyncState("catalog_last_full_sync_local_date"),
-    getSyncState("catalog_last_warehouse_sync_local_hour")
-  ]);
+  const lastLocalDate = await getSyncState("catalog_last_full_sync_local_date");
 
-  if (lastLocalDate !== localDate) {
-    try {
-      const result = await runFullSync({ reason: "scheduled-full-sync" });
-      await setSyncState("catalog_last_full_sync_local_date", localDate);
-      await setSyncState("catalog_last_warehouse_sync_local_hour", localHourKey);
-      await setSyncState("catalog_last_full_sync_error_at", "");
-      await setSyncState("catalog_last_full_sync_error", "");
-
-      return {
-        ok: true,
-        skipped: false,
-        mode: "full",
-        localDate,
-        localHour,
-        ...result
-      };
-    } catch (error) {
-      const errorMessage = String(error?.message || error || "Full sync failed.").slice(
-        0,
-        1000
-      );
-      await setSyncState("catalog_last_full_sync_error_at", new Date().toISOString());
-      await setSyncState("catalog_last_full_sync_error", errorMessage);
-
-      if (lastWarehouseLocalHour === localHourKey) {
-        throw error;
-      }
-
-      const result = await runWarehouseSync({
-        reason: "scheduled-warehouse-sync-after-full-sync-failure"
-      });
-      await setSyncState("catalog_last_warehouse_sync_local_hour", localHourKey);
-
-      return {
-        ok: false,
-        skipped: false,
-        mode: "warehouse",
-        degraded: true,
-        fullSyncError: errorMessage,
-        localDate,
-        localHour,
-        ...result
-      };
-    }
+  if (lastLocalDate === localDate) {
+    return {
+      ok: true,
+      skipped: true,
+      mode: "full",
+      reason: `Full sync already ran for ${localDate} in ${syncTimezone}.`,
+      localDate,
+      localHour
+    };
   }
+
+  try {
+    const result = await runFullSync({ reason: "scheduled-full-sync" });
+    await setSyncState("catalog_last_full_sync_local_date", localDate);
+    await setSyncState("catalog_last_warehouse_sync_local_hour", localHourKey);
+    await setSyncState("catalog_last_full_sync_error_at", "");
+    await setSyncState("catalog_last_full_sync_error", "");
+
+    return {
+      ok: true,
+      skipped: false,
+      mode: "full",
+      localDate,
+      localHour,
+      ...result
+    };
+  } catch (error) {
+    const errorMessage = String(error?.message || error || "Full sync failed.").slice(
+      0,
+      1000
+    );
+    await setSyncState("catalog_last_full_sync_error_at", new Date().toISOString());
+    await setSyncState("catalog_last_full_sync_error", errorMessage);
+    throw error;
+  }
+}
+
+async function runScheduledWarehouseSync() {
+  const { localDate, localHour } = getTimeZoneDateParts(new Date(), syncTimezone);
+  const localHourKey = `${localDate}-${String(localHour).padStart(2, "0")}`;
+  const lastWarehouseLocalHour = await getSyncState(
+    "catalog_last_warehouse_sync_local_hour"
+  );
 
   if (lastWarehouseLocalHour === localHourKey) {
     return {
@@ -3062,8 +3057,8 @@ async function getCatalogSyncStatus() {
   };
 }
 
-async function runScheduledFullSync() {
-  return runScheduledCatalogSync();
+async function runScheduledCatalogSync() {
+  return runScheduledWarehouseSync();
 }
 
 function clearCaches() {
@@ -3086,6 +3081,7 @@ module.exports = {
   refreshProductBySku,
   runScheduledCatalogSync,
   runScheduledFullSync,
+  runScheduledWarehouseSync,
   runFullSync,
   runWarehouseSync,
   updateCatalogVendorProductQuantity

@@ -3,7 +3,7 @@ const catalogService = require("../services/catalog.service");
 
 async function getVersion(req, res, next) {
   try {
-    res.set("Cache-Control", "private, max-age=300, stale-while-revalidate=300");
+    res.set("Cache-Control", "private, max-age=3600, stale-while-revalidate=300");
     res.send(statusService.getVersionStatus());
   } catch (err) {
     next(err);

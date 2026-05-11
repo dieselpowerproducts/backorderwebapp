@@ -11,6 +11,7 @@ import {
   createNote,
   deleteNote,
   getEmailTemplates,
+  getNotesBootstrap,
   getProductDetails,
   getUsers,
   getNotes,
@@ -458,6 +459,29 @@ export function NotesModal({
     }
   }, [onProductStockChanged, sku]);
 
+  const loadNotesBootstrap = useCallback(async () => {
+    setNotesError("");
+    setDetailsError("");
+    setIsProductDetailsLoading(true);
+
+    try {
+      const result = await getNotesBootstrap(sku);
+      setNotes(result.notes);
+      setProductDetails(result.productDetails);
+      setFollowUpDate(result.productDetails.followUpDate || "");
+      onProductStockChanged?.(getProductDetailsStockUpdate(result.productDetails));
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Unable to load product notes.";
+      setNotesError(message);
+      setDetailsError(message);
+      setProductDetails(null);
+      setFollowUpDate("");
+    } finally {
+      setIsProductDetailsLoading(false);
+    }
+  }, [onProductStockChanged, sku]);
+
   const loadMentionUsers = useCallback(async () => {
     if (mentionUsersLoadedRef.current || mentionUsersLoadingRef.current) {
       return;
@@ -495,12 +519,8 @@ export function NotesModal({
   }, []);
 
   useEffect(() => {
-    loadNotes();
-  }, [loadNotes]);
-
-  useEffect(() => {
-    loadProductDetails();
-  }, [loadProductDetails]);
+    loadNotesBootstrap();
+  }, [loadNotesBootstrap]);
 
   useEffect(() => {
     if (!activeMention) {

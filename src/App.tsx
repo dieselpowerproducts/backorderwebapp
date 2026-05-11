@@ -16,7 +16,7 @@ import type {
   VendorEmailSentUpdate
 } from "./types";
 
-const appVersionFocusRefreshMinMs = 5 * 60 * 1000;
+const appVersionFocusRefreshMinMs = 60 * 60 * 1000;
 
 function parseRoute(): AppRoute {
   const hash = window.location.hash.replace(/^#\/?/, "");

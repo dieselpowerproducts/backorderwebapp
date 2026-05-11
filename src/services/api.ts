@@ -6,6 +6,7 @@ import type {
   BackordersResponse,
   EmailTemplate,
   Note,
+  NotesBootstrapResponse,
   ProductDetails,
   ProductsResponse,
   StockCheckSort,
@@ -334,6 +335,12 @@ export function importBackorders(formData: FormData) {
 
 export function getNotes(sku: string) {
   return request<Note[]>(`/notes/${encodeURIComponent(sku)}`);
+}
+
+export function getNotesBootstrap(sku: string) {
+  return request<NotesBootstrapResponse>(
+    `/notes/${encodeURIComponent(sku)}/bootstrap`
+  );
 }
 
 export function createNote({ sku, note }: { sku: string; note: string }) {
