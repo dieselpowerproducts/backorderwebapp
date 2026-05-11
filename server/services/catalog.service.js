@@ -2347,18 +2347,26 @@ async function runFullSync({ reason = "manual" } = {}) {
 
   fullSyncPromise = (async () => {
     const syncStamp = new Date().toISOString();
-    const products = await fetchAllPages(fetchProductsPageFromSkuNexus);
-    const vendors = await fetchAllPages(fetchVendorsPageFromSkuNexus);
-    const vendorProducts = await fetchAllPages(fetchVendorProductsPageFromSkuNexus);
+    const warehouseRowsResult = fetchAllPages(fetchWarehouseStockPageFromSkuNexus)
+      .then((rows) => ({ rows, error: null }))
+      .catch((error) => ({ rows: [], error }));
+    const [products, vendors, vendorProducts, rawWarehouseRowsResult] =
+      await Promise.all([
+        fetchAllPages(fetchProductsPageFromSkuNexus),
+        fetchAllPages(fetchVendorsPageFromSkuNexus),
+        fetchAllPages(fetchVendorProductsPageFromSkuNexus),
+        warehouseRowsResult
+      ]);
     let warehouseStockRows = [];
-    let didSyncWarehouse = false;
+    const didSyncWarehouse = !rawWarehouseRowsResult.error;
 
-    try {
-      const rawWarehouseRows = await fetchAllPages(fetchWarehouseStockPageFromSkuNexus);
-      warehouseStockRows = aggregateWarehouseStockRows(rawWarehouseRows);
-      didSyncWarehouse = true;
-    } catch (error) {
-      console.error("Warehouse stock sync failed; continuing without warehouse cache.", error);
+    if (rawWarehouseRowsResult.error) {
+      console.error(
+        "Warehouse stock sync failed; continuing without warehouse cache.",
+        rawWarehouseRowsResult.error
+      );
+    } else {
+      warehouseStockRows = aggregateWarehouseStockRows(rawWarehouseRowsResult.rows);
     }
 
     const normalizedProducts = products
@@ -2853,27 +2861,57 @@ async function listVendorProducts(vendorId, queryParams = {}) {
 
 async function runScheduledCatalogSync() {
   const { localDate, localHour } = getTimeZoneDateParts(new Date(), syncTimezone);
-  const lastLocalDate = await getSyncState("catalog_last_full_sync_local_date");
   const localHourKey = `${localDate}-${String(localHour).padStart(2, "0")}`;
+  const [lastLocalDate, lastWarehouseLocalHour] = await Promise.all([
+    getSyncState("catalog_last_full_sync_local_date"),
+    getSyncState("catalog_last_warehouse_sync_local_hour")
+  ]);
 
   if (lastLocalDate !== localDate) {
-    const result = await runFullSync({ reason: "scheduled-full-sync" });
-    await setSyncState("catalog_last_full_sync_local_date", localDate);
-    await setSyncState("catalog_last_warehouse_sync_local_hour", localHourKey);
+    try {
+      const result = await runFullSync({ reason: "scheduled-full-sync" });
+      await setSyncState("catalog_last_full_sync_local_date", localDate);
+      await setSyncState("catalog_last_warehouse_sync_local_hour", localHourKey);
+      await setSyncState("catalog_last_full_sync_error_at", "");
+      await setSyncState("catalog_last_full_sync_error", "");
 
-    return {
-      ok: true,
-      skipped: false,
-      mode: "full",
-      localDate,
-      localHour,
-      ...result
-    };
+      return {
+        ok: true,
+        skipped: false,
+        mode: "full",
+        localDate,
+        localHour,
+        ...result
+      };
+    } catch (error) {
+      const errorMessage = String(error?.message || error || "Full sync failed.").slice(
+        0,
+        1000
+      );
+      await setSyncState("catalog_last_full_sync_error_at", new Date().toISOString());
+      await setSyncState("catalog_last_full_sync_error", errorMessage);
+
+      if (lastWarehouseLocalHour === localHourKey) {
+        throw error;
+      }
+
+      const result = await runWarehouseSync({
+        reason: "scheduled-warehouse-sync-after-full-sync-failure"
+      });
+      await setSyncState("catalog_last_warehouse_sync_local_hour", localHourKey);
+
+      return {
+        ok: false,
+        skipped: false,
+        mode: "warehouse",
+        degraded: true,
+        fullSyncError: errorMessage,
+        localDate,
+        localHour,
+        ...result
+      };
+    }
   }
-
-  const lastWarehouseLocalHour = await getSyncState(
-    "catalog_last_warehouse_sync_local_hour"
-  );
 
   if (lastWarehouseLocalHour === localHourKey) {
     return {

@@ -8,7 +8,8 @@
       "includeFiles": "server/**"
     },
     "api/cron/catalog-full-sync.js": {
-      "includeFiles": "server/**"
+      "includeFiles": "server/**",
+      "maxDuration": 60
     },
     "api/cron/auto-inventory.js": {
       "includeFiles": "server/**",
