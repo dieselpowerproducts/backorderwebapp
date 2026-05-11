@@ -1927,18 +1927,21 @@ async function fetchWarehouseStockForSkuFromSkuNexus(sku) {
 
 async function upsertProducts(rows, syncStamp) {
   const normalizedRows = dedupeRows(
-    rows
-      .map(normalizeProductRow)
-      .filter((row) => row.product_id && row.sku)
-      .map(({ product_id, sku, name, state, qty_available, is_kit }) => ({
-        product_id,
-        sku,
-        name,
-        state,
-        qty_available,
-        is_kit
-      })),
-    (row) => row.product_id
+    dedupeRows(
+      rows
+        .map(normalizeProductRow)
+        .filter((row) => row.product_id && row.sku)
+        .map(({ product_id, sku, name, state, qty_available, is_kit }) => ({
+          product_id,
+          sku,
+          name,
+          state,
+          qty_available,
+          is_kit
+        })),
+      (row) => row.product_id
+    ),
+    (row) => row.sku
   );
 
   if (normalizedRows.length === 0) {
@@ -1946,6 +1949,7 @@ async function upsertProducts(rows, syncStamp) {
   }
 
   const sql = getSql();
+  await deleteProductsDisplacedBySku(normalizedRows);
   await sql.query(
     `
       INSERT INTO catalog_products (
@@ -1982,6 +1986,88 @@ async function upsertProducts(rows, syncStamp) {
           last_synced_at = EXCLUDED.last_synced_at
     `,
     [JSON.stringify(normalizedRows), syncStamp]
+  );
+}
+
+async function deleteProductsDisplacedBySku(rows) {
+  const skuRows = rows
+    .map((row) => ({
+      product_id: String(row?.product_id || "").trim(),
+      sku: String(row?.sku || "").trim()
+    }))
+    .filter((row) => row.product_id && row.sku);
+
+  if (skuRows.length === 0) {
+    return;
+  }
+
+  const sql = getSql();
+  const displacedRows = await sql.query(
+    `
+      WITH incoming AS (
+        SELECT product_id, sku
+        FROM jsonb_to_recordset($1::jsonb) AS row(
+          product_id text,
+          sku text
+        )
+      )
+      SELECT p.product_id
+      FROM catalog_products p
+      JOIN incoming i
+        ON i.sku = p.sku
+      WHERE p.product_id <> i.product_id
+    `,
+    [JSON.stringify(skuRows)]
+  );
+  const displacedProductIds = Array.from(
+    new Set(
+      displacedRows
+        .map((row) => String(row?.product_id || "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  if (displacedProductIds.length === 0) {
+    return;
+  }
+
+  const idJson = JSON.stringify(displacedProductIds);
+
+  await sql.query(
+    `
+      DELETE FROM catalog_product_components
+      WHERE parent_product_id IN (
+        SELECT jsonb_array_elements_text($1::jsonb)
+      )
+    `,
+    [idJson]
+  );
+  await sql.query(
+    `
+      DELETE FROM catalog_vendor_products
+      WHERE product_id IN (
+        SELECT jsonb_array_elements_text($1::jsonb)
+      )
+    `,
+    [idJson]
+  );
+  await sql.query(
+    `
+      DELETE FROM catalog_warehouse_stock
+      WHERE product_id IN (
+        SELECT jsonb_array_elements_text($1::jsonb)
+      )
+    `,
+    [idJson]
+  );
+  await sql.query(
+    `
+      DELETE FROM catalog_products
+      WHERE product_id IN (
+        SELECT jsonb_array_elements_text($1::jsonb)
+      )
+    `,
+    [idJson]
   );
 }
 
@@ -2384,6 +2470,10 @@ async function runFullSync({ reason = "manual" } = {}) {
     await deleteStaleFullSyncRows(syncStamp, { includeWarehouse: didSyncWarehouse });
     await setSyncState("catalog_last_full_sync_at", syncStamp);
     await setSyncState("catalog_last_full_sync_reason", reason);
+    if (didSyncWarehouse) {
+      await setSyncState("catalog_last_warehouse_sync_at", syncStamp);
+      await setSyncState("catalog_last_warehouse_sync_reason", reason);
+    }
     clearCaches();
 
     return {
