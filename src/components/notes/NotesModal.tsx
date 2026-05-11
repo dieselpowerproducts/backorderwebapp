@@ -423,6 +423,8 @@ export function NotesModal({
   const followUpInputRef = useRef<HTMLInputElement | null>(null);
   const notesListRef = useRef<HTMLDivElement | null>(null);
   const noteInputRef = useRef<HTMLInputElement | null>(null);
+  const mentionUsersLoadedRef = useRef(false);
+  const mentionUsersLoadingRef = useRef(false);
   const vendorAddResultsId = useId();
 
   const loadNotes = useCallback(async () => {
@@ -457,14 +459,22 @@ export function NotesModal({
   }, [onProductStockChanged, sku]);
 
   const loadMentionUsers = useCallback(async () => {
+    if (mentionUsersLoadedRef.current || mentionUsersLoadingRef.current) {
+      return;
+    }
+
+    mentionUsersLoadingRef.current = true;
     setIsMentionUsersLoading(true);
 
     try {
       const result = await getUsers();
       setMentionUsers(result.length > 0 ? result : getMentionSeedUsers());
+      mentionUsersLoadedRef.current = true;
     } catch {
       setMentionUsers(getMentionSeedUsers());
+      mentionUsersLoadedRef.current = true;
     } finally {
+      mentionUsersLoadingRef.current = false;
       setIsMentionUsersLoading(false);
     }
   }, []);
@@ -493,16 +503,12 @@ export function NotesModal({
   }, [loadProductDetails]);
 
   useEffect(() => {
-    loadMentionUsers();
-  }, [loadMentionUsers]);
-
-  useEffect(() => {
-    if (!activeMention || activeMention.query !== "") {
+    if (!activeMention) {
       return;
     }
 
     void loadMentionUsers();
-  }, [activeMention?.start, activeMention?.query, loadMentionUsers]);
+  }, [activeMention, loadMentionUsers]);
 
   useEffect(() => {
     setIsKitModalOpen(false);
