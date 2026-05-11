@@ -9,7 +9,6 @@ type NotificationsMenuProps = {
 
 const autoInventorySku = "AUTO-INVENTORY";
 const dropdownPreviewLength = 180;
-const notificationPollIntervalMs = 5 * 60 * 1000;
 const notificationFocusRefreshMinMs = 60 * 1000;
 
 function formatNotificationTimestamp(value: string) {
@@ -125,22 +124,23 @@ export function NotificationsMenu({ onOpenSku }: NotificationsMenuProps) {
   useEffect(() => {
     loadNotifications(true);
 
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void loadNotifications();
-      }
-    }, notificationPollIntervalMs);
-    const handleFocus = () => {
+    const loadStaleNotifications = () => {
       if (Date.now() - lastLoadedAtRef.current >= notificationFocusRefreshMinMs) {
         void loadNotifications();
       }
     };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        loadStaleNotifications();
+      }
+    };
 
-    window.addEventListener("focus", handleFocus);
+    window.addEventListener("focus", loadStaleNotifications);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      window.clearInterval(interval);
-      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("focus", loadStaleNotifications);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [loadNotifications]);
 

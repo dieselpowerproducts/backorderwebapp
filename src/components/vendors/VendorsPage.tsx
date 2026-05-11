@@ -23,6 +23,7 @@ type VendorsPageProps = {
 };
 
 const pageSize = 30;
+const autoInventoryFocusRefreshMinMs = 60 * 1000;
 
 function getDefaultAutoInventorySettings(
   vendorId: string
@@ -225,6 +226,7 @@ export function VendorsPage({
 
   useEffect(() => {
     let ignore = false;
+    let lastLoadedAt = 0;
 
     if (!selectedVendor) {
       setAutoInventorySettings(null);
@@ -235,6 +237,7 @@ export function VendorsPage({
 
     async function loadAutoInventorySettings() {
       try {
+        lastLoadedAt = Date.now();
         const settings = await getVendorAutoInventorySettings(selectedVendor);
 
         if (!ignore) {
@@ -252,19 +255,27 @@ export function VendorsPage({
     }
 
     void loadAutoInventorySettings();
-    const intervalId = window.setInterval(() => {
-      void loadAutoInventorySettings();
-    }, 60000);
-    const handleFocus = () => {
-      void loadAutoInventorySettings();
+    const loadStaleAutoInventorySettings = () => {
+      if (
+        document.visibilityState === "visible" &&
+        Date.now() - lastLoadedAt >= autoInventoryFocusRefreshMinMs
+      ) {
+        void loadAutoInventorySettings();
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        loadStaleAutoInventorySettings();
+      }
     };
 
-    window.addEventListener("focus", handleFocus);
+    window.addEventListener("focus", loadStaleAutoInventorySettings);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       ignore = true;
-      window.clearInterval(intervalId);
-      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("focus", loadStaleAutoInventorySettings);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [selectedVendor]);
 

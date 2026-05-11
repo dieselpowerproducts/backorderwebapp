@@ -16,7 +16,7 @@ import type {
   VendorEmailSentUpdate
 } from "./types";
 
-const appVersionCheckIntervalMs = 5 * 60 * 1000;
+const appVersionFocusRefreshMinMs = 5 * 60 * 1000;
 
 function parseRoute(): AppRoute {
   const hash = window.location.hash.replace(/^#\/?/, "");
@@ -115,6 +115,7 @@ export function App() {
 
     let ignore = false;
     let currentVersion = "";
+    let lastVersionCheckedAt = 0;
 
     async function checkVersion() {
       if (document.visibilityState !== "visible") {
@@ -122,6 +123,7 @@ export function App() {
       }
 
       try {
+        lastVersionCheckedAt = Date.now();
         const result = await getAppVersion();
         const nextVersion = String(result.version || "").trim();
 
@@ -143,22 +145,24 @@ export function App() {
     }
 
     void checkVersion();
-    const intervalId = window.setInterval(
-      checkVersion,
-      appVersionCheckIntervalMs
-    );
+    const checkStaleVersion = () => {
+      if (Date.now() - lastVersionCheckedAt >= appVersionFocusRefreshMinMs) {
+        void checkVersion();
+      }
+    };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        void checkVersion();
+        checkStaleVersion();
       }
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", checkStaleVersion);
 
     return () => {
       ignore = true;
-      window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", checkStaleVersion);
     };
   }, [authStatus, authUser]);
 
