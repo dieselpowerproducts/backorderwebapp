@@ -23,7 +23,7 @@
   "crons": [
     {
       "path": "/api/cron/catalog-warehouse-sync",
-      "schedule": "0 * * * *"
+      "schedule": "0 0-3,13-23 * * *"
     },
     {
       "path": "/api/cron/catalog-full-sync",

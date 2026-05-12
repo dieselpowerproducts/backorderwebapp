@@ -10,6 +10,8 @@ const stockCheckCacheTtlMs = 5 * 60 * 1000;
 const dppWarehouseLabel = "DPP Warehouse";
 const dppWarehouseStockType = "WAREHOUSE";
 const syncTimezone = process.env.CATALOG_SYNC_TIMEZONE || "America/Los_Angeles";
+const warehouseSyncStartHour = 6;
+const warehouseSyncEndHour = 20;
 const stockCheckSortValues = new Set([
   "all",
   "yesterday",
@@ -492,6 +494,10 @@ function normalizeProductRow(row) {
     is_kit: Boolean(row?.is_kit),
     relatedProduct: Array.isArray(row?.relatedProduct) ? row.relatedProduct : []
   };
+}
+
+function isWarehouseSyncWindow(localHour) {
+  return localHour >= warehouseSyncStartHour && localHour < warehouseSyncEndHour;
 }
 
 function normalizeVendorRow(row) {
@@ -2994,6 +3000,18 @@ async function runScheduledFullSync() {
 async function runScheduledWarehouseSync() {
   const { localDate, localHour } = getTimeZoneDateParts(new Date(), syncTimezone);
   const localHourKey = `${localDate}-${String(localHour).padStart(2, "0")}`;
+
+  if (!isWarehouseSyncWindow(localHour)) {
+    return {
+      ok: true,
+      skipped: true,
+      mode: "warehouse",
+      reason: `Warehouse sync is paused from 8pm to 6am in ${syncTimezone}.`,
+      localDate,
+      localHour
+    };
+  }
+
   const lastWarehouseLocalHour = await getSyncState(
     "catalog_last_warehouse_sync_local_hour"
   );
