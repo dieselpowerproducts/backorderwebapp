@@ -3,6 +3,7 @@ import { LoginPage } from "./components/auth/LoginPage";
 import { NotificationsMenu } from "./components/layout/NotificationsMenu";
 import { Sidebar } from "./components/layout/Sidebar";
 import { NotesModal } from "./components/notes/NotesModal";
+import { NotificationsPage } from "./components/notifications/NotificationsPage";
 import { ProductsPage } from "./components/products/ProductsPage";
 import { StockCheckPage } from "./components/products/StockCheckPage";
 import { VendorsPage } from "./components/vendors/VendorsPage";
@@ -31,7 +32,12 @@ function parseRoute(): AppRoute {
       : { page: "products", sku: "", vendor: "" };
   }
 
-  if (page === "vendors" || page === "products" || page === "stock-check") {
+  if (
+    page === "vendors" ||
+    page === "products" ||
+    page === "stock-check" ||
+    page === "notifications"
+  ) {
     return { page, sku: "", vendor: page === "vendors" ? routeValue : "" };
   }
 
@@ -258,7 +264,10 @@ export function App() {
 
       <div className="app-main-shell">
         <div className="app-topbar">
-          <NotificationsMenu onOpenSku={setSelectedSku} />
+          <NotificationsMenu
+            onOpenSku={setSelectedSku}
+            onViewAll={() => setHashRoute("notifications")}
+          />
         </div>
 
         <main className="main">
@@ -285,6 +294,10 @@ export function App() {
               refreshKey={productRefreshKey}
               onOpenNotes={setSelectedSku}
             />
+          )}
+
+          {route.page === "notifications" && (
+            <NotificationsPage onOpenSku={setSelectedSku} />
           )}
         </main>
       </div>

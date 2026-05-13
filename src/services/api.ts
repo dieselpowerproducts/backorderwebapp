@@ -88,8 +88,28 @@ export function getUsers() {
   return request<AuthUser[]>("/users");
 }
 
-export function getNotifications() {
-  return request<NotificationsResponse>("/notifications");
+export function getNotifications({
+  limit,
+  unreadOnly = false
+}: {
+  limit?: number;
+  unreadOnly?: boolean;
+} = {}) {
+  const params = new URLSearchParams();
+
+  if (limit) {
+    params.set("limit", String(limit));
+  }
+
+  if (unreadOnly) {
+    params.set("unreadOnly", "1");
+  }
+
+  const query = params.toString();
+
+  return request<NotificationsResponse>(
+    query ? `/notifications?${query}` : "/notifications"
+  );
 }
 
 export function markNotificationRead(id: string) {

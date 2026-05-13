@@ -1,81 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getNotifications, markNotificationRead } from "../../services/api";
+import { SystemNotificationModal } from "../notifications/SystemNotificationModal";
+import {
+  formatNotificationTimestamp,
+  getDropdownPreview,
+  getNotificationLine,
+  getNotificationTarget,
+  isSystemNotification
+} from "../notifications/notificationDisplay";
 import { updateFaviconBadge } from "../../utils/faviconBadge";
 import type { AppNotification } from "../../types";
 
 type NotificationsMenuProps = {
   onOpenSku: (sku: string) => void;
+  onViewAll: () => void;
 };
 
-const autoInventorySku = "AUTO-INVENTORY";
-const dropdownPreviewLength = 180;
 const notificationFocusRefreshMinMs = 5 * 60 * 1000;
 
-function formatNotificationTimestamp(value: string) {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  const now = new Date();
-  const isSameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
-
-  if (isSameDay) {
-    return new Intl.DateTimeFormat(undefined, {
-      hour: "numeric",
-      minute: "2-digit"
-    }).format(date);
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit"
-  }).format(date);
-}
-
-function isSystemNotification(notification: AppNotification) {
-  return (
-    notification.sku.toUpperCase() === autoInventorySku ||
-    notification.noteId.startsWith("auto-inventory:") ||
-    notification.sender.sub.startsWith("system:")
-  );
-}
-
-function getNotificationLine(notification: AppNotification) {
-  if (isSystemNotification(notification)) {
-    return notification.sku.toUpperCase() === autoInventorySku
-      ? "Auto inventory failsafe"
-      : "System notification";
-  }
-
-  return "mentioned you on";
-}
-
-function getNotificationTarget(notification: AppNotification) {
-  return isSystemNotification(notification) ? "Details" : notification.sku;
-}
-
-function getSystemNotificationTitle(notification: AppNotification) {
-  return notification.sku.toUpperCase() === autoInventorySku
-    ? "Auto Inventory Failsafe"
-    : "System Notification";
-}
-
-function getDropdownPreview(value: string) {
-  if (value.length <= dropdownPreviewLength) {
-    return value;
-  }
-
-  return `${value.slice(0, dropdownPreviewLength - 3).trimEnd()}...`;
-}
-
-export function NotificationsMenu({ onOpenSku }: NotificationsMenuProps) {
+export function NotificationsMenu({ onOpenSku, onViewAll }: NotificationsMenuProps) {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
@@ -102,7 +45,7 @@ export function NotificationsMenu({ onOpenSku }: NotificationsMenuProps) {
       setError("");
 
       try {
-        const result = await getNotifications();
+        const result = await getNotifications({ limit: 20, unreadOnly: true });
         setNotifications(result.items);
         setUnreadCount(result.unreadCount);
         lastLoadedAtRef.current = Date.now();
@@ -182,17 +125,8 @@ export function NotificationsMenu({ onOpenSku }: NotificationsMenuProps) {
 
   async function markNotificationAsRead(notification: AppNotification) {
     if (!notification.read_at) {
-      const readAt = new Date().toISOString();
-
       setNotifications((current) =>
-        current.map((item) =>
-          item.id === notification.id
-            ? {
-                ...item,
-                read_at: readAt
-              }
-            : item
-        )
+        current.filter((item) => item.id !== notification.id)
       );
       setUnreadCount((current) => Math.max(0, current - 1));
 
@@ -214,6 +148,11 @@ export function NotificationsMenu({ onOpenSku }: NotificationsMenuProps) {
     }
 
     onOpenSku(notification.sku);
+  }
+
+  function handleViewAll() {
+    setIsOpen(false);
+    onViewAll();
   }
 
   return (
@@ -242,13 +181,18 @@ export function NotificationsMenu({ onOpenSku }: NotificationsMenuProps) {
             <strong>Notifications</strong>
             <span>{unreadCount > 0 ? `${unreadCount} unread` : "Up to date"}</span>
           </div>
+          <div className="notifications-dropdown-actions">
+            <button type="button" onClick={handleViewAll}>
+              View all
+            </button>
+          </div>
 
           {isLoading ? (
             <p className="notifications-status">Loading notifications...</p>
           ) : error ? (
             <p className="notifications-status error-message">{error}</p>
           ) : notifications.length === 0 ? (
-            <p className="notifications-status">No notifications yet.</p>
+            <p className="notifications-status">No unread notifications.</p>
           ) : (
             <div className="notifications-list">
               {notifications.map((notification) => (
@@ -283,55 +227,10 @@ export function NotificationsMenu({ onOpenSku }: NotificationsMenuProps) {
       )}
     </div>
     {selectedSystemNotification && (
-      <div
-        className="modal system-notification-modal-backdrop"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="systemNotificationTitle"
-        onMouseDown={(event) => {
-          if (event.target === event.currentTarget) {
-            setSelectedSystemNotification(null);
-          }
-        }}
-      >
-        <section className="modal-content system-notification-modal">
-          <header className="system-notification-modal-header">
-            <div>
-              <p className="eyebrow">StockBridge</p>
-              <h2 id="systemNotificationTitle">
-                {getSystemNotificationTitle(selectedSystemNotification)}
-              </h2>
-            </div>
-            <button
-              type="button"
-              aria-label="Close notification details"
-              onClick={() => setSelectedSystemNotification(null)}
-            >
-              Close
-            </button>
-          </header>
-
-          <dl className="system-notification-meta">
-            <div>
-              <dt>Sent</dt>
-              <dd>
-                {formatNotificationTimestamp(
-                  selectedSystemNotification.created_at
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt>Source</dt>
-              <dd>{selectedSystemNotification.sender.name}</dd>
-            </div>
-          </dl>
-
-          <div className="system-notification-detail">
-            {selectedSystemNotification.notePreview ||
-              "No details were included with this notification."}
-          </div>
-        </section>
-      </div>
+      <SystemNotificationModal
+        notification={selectedSystemNotification}
+        onClose={() => setSelectedSystemNotification(null)}
+      />
     )}
     </>
   );

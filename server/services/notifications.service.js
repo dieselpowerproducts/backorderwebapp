@@ -366,7 +366,7 @@ function buildRecipientConditions(user) {
   };
 }
 
-async function getNotificationsForUser(user, { limit = 20 } = {}) {
+async function getNotificationsForUser(user, { limit = 20, unreadOnly = false } = {}) {
   const { safeUserSub, safeUserEmail } = buildRecipientConditions(user);
 
   if (!safeUserSub && !safeUserEmail) {
@@ -378,7 +378,7 @@ async function getNotificationsForUser(user, { limit = 20 } = {}) {
 
   await initializeSchema();
 
-  const safeLimit = Math.min(Math.max(Number.parseInt(limit, 10) || 20, 1), 50);
+  const safeLimit = Math.min(Math.max(Number.parseInt(limit, 10) || 20, 1), 200);
   const sql = getSql();
   const [rows, unreadRows] = await Promise.all([
     sql`
@@ -401,6 +401,7 @@ async function getNotificationsForUser(user, { limit = 20 } = {}) {
           AND lower(COALESCE(recipient_email, '')) = ${safeUserEmail}
         )
       )
+        AND (${Boolean(unreadOnly)} = false OR read_at IS NULL)
       ORDER BY read_at ASC NULLS FIRST, created_at DESC
       LIMIT ${safeLimit}
     `,
