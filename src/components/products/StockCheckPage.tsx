@@ -18,6 +18,11 @@ type StockCheckPageProps = {
   onOpenNotes: (sku: string) => void;
 };
 
+type StockCheckCacheEntry = {
+  data: Product[];
+  total: number;
+};
+
 const pageSize = 30;
 const stockCheckSortOptions: Array<{ value: StockCheckSort; label: string }> = [
   { value: "yesterday", label: "Yesterday" },
@@ -76,22 +81,42 @@ function applyAndFilterStockCheckProducts(
   products: Product[],
   productStockUpdate: ProductStockUpdate | null,
   followUpOverrides: FollowUpOverrides,
-  sort: StockCheckSort
+  sort: StockCheckSort,
+  vendorEmailSentSkus: Set<string> = new Set()
 ) {
   return applyProductStockUpdate(products, productStockUpdate)
     .map((product) => {
       const overrideKey = product.sku.trim().toUpperCase();
+      const vendorEmailSent = vendorEmailSentSkus.has(overrideKey)
+        ? true
+        : product.vendorEmailSent;
 
       if (!Object.prototype.hasOwnProperty.call(followUpOverrides, overrideKey)) {
-        return product;
+        return {
+          ...product,
+          vendorEmailSent
+        };
       }
 
       return {
         ...product,
-        followUpDate: followUpOverrides[overrideKey] || ""
+        followUpDate: followUpOverrides[overrideKey] || "",
+        vendorEmailSent
       };
     })
     .filter((product) => matchesStockCheckFilter(product, sort));
+}
+
+function getStockCheckCacheKey({
+  page,
+  referenceDate,
+  sort
+}: {
+  page: number;
+  referenceDate: string;
+  sort: StockCheckSort;
+}) {
+  return `${referenceDate}:${sort}:${page}`;
 }
 
 export function StockCheckPage({
@@ -102,6 +127,8 @@ export function StockCheckPage({
 }: StockCheckPageProps) {
   const latestProductStockUpdate = useRef(productStockUpdate);
   const latestFollowUpOverrides = useRef(followUpOverrides);
+  const stockCheckCache = useRef(new Map<string, StockCheckCacheEntry>());
+  const vendorEmailSentSkus = useRef(new Set<string>());
   const [products, setProducts] = useState<Product[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
@@ -117,10 +144,35 @@ export function StockCheckPage({
     latestFollowUpOverrides.current = followUpOverrides;
   }, [followUpOverrides]);
 
+  function applyLocalState(productsToApply: Product[], nextSort = sort) {
+    return applyAndFilterStockCheckProducts(
+      productsToApply,
+      latestProductStockUpdate.current,
+      latestFollowUpOverrides.current,
+      nextSort,
+      vendorEmailSentSkus.current
+    );
+  }
+
   useEffect(() => {
     let ignore = false;
+    const referenceDate = getLocalDateText();
+    const cacheKey = getStockCheckCacheKey({
+      page: currentPage,
+      referenceDate,
+      sort
+    });
+    const cachedResult = stockCheckCache.current.get(cacheKey);
 
     async function loadStockCheckProducts() {
+      if (cachedResult) {
+        setError("");
+        setIsLoading(false);
+        setProducts(applyLocalState(cachedResult.data, sort));
+        setTotalItems(cachedResult.total);
+        return;
+      }
+
       setIsLoading(true);
       setError("");
 
@@ -130,19 +182,16 @@ export function StockCheckPage({
           limit: pageSize,
           search: "",
           sort,
-          referenceDate: getLocalDateText(),
+          referenceDate,
           bypassCache: false
         });
 
         if (!ignore) {
-          setProducts(
-            applyAndFilterStockCheckProducts(
-              result.data,
-              latestProductStockUpdate.current,
-              latestFollowUpOverrides.current,
-              sort
-            )
-          );
+          stockCheckCache.current.set(cacheKey, {
+            data: result.data,
+            total: result.total
+          });
+          setProducts(applyLocalState(result.data, sort));
           setTotalItems(result.total);
         }
       } catch (err) {
@@ -177,7 +226,8 @@ export function StockCheckPage({
         current,
         productStockUpdate,
         followUpOverrides,
-        sort
+        sort,
+        vendorEmailSentSkus.current
       )
     );
   }, [followUpOverrides, productStockUpdate, sort]);
@@ -187,9 +237,12 @@ export function StockCheckPage({
       return;
     }
 
+    const emailedSku = vendorEmailSentUpdate.sku.trim().toUpperCase();
+
+    vendorEmailSentSkus.current.add(emailedSku);
     setProducts((current) =>
       current.map((product) =>
-        product.sku === vendorEmailSentUpdate.sku
+        product.sku.trim().toUpperCase() === emailedSku
           ? {
               ...product,
               vendorEmailSent: true
