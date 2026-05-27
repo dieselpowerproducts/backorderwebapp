@@ -87,6 +87,27 @@ function isFlowThroughStockCheckSort(sort: StockCheckSort) {
   return sort === "yesterday" || sort === "today" || sort === "tomorrow";
 }
 
+function compareStockCheckProducts(left: Product, right: Product) {
+  const leftDate = left.followUpDate || "";
+  const rightDate = right.followUpDate || "";
+
+  if (leftDate && rightDate && leftDate !== rightDate) {
+    return leftDate.localeCompare(rightDate);
+  }
+
+  if (leftDate && !rightDate) {
+    return -1;
+  }
+
+  if (!leftDate && rightDate) {
+    return 1;
+  }
+
+  return left.sku.localeCompare(right.sku, undefined, {
+    sensitivity: "base"
+  });
+}
+
 function applyAndFilterStockCheckProducts(
   products: Product[],
   productStockUpdate: ProductStockUpdate | null,
@@ -116,7 +137,8 @@ function applyAndFilterStockCheckProducts(
       };
     })
     .filter((product) => matchesStockCheckFilter(product, sort))
-    .filter((product) => !excludedSkus.has(normalizeSku(product.sku)));
+    .filter((product) => !excludedSkus.has(normalizeSku(product.sku)))
+    .sort(compareStockCheckProducts);
 }
 
 function getStockCheckCacheKey({
@@ -147,12 +169,14 @@ export function StockCheckPage({
   const currentPageRef = useRef(1);
   const sortRef = useRef<StockCheckSort>("all");
   const totalItemsRef = useRef(0);
+  const handledRefreshToken = useRef(0);
   const [products, setProducts] = useState<Product[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [sort, setSort] = useState<StockCheckSort>("all");
+  const [refreshToken, setRefreshToken] = useState(0);
 
   useEffect(() => {
     latestProductStockUpdate.current = productStockUpdate;
@@ -365,9 +389,10 @@ export function StockCheckPage({
       sort
     });
     const cachedResult = stockCheckCache.current.get(cacheKey);
+    const shouldBypassCache = refreshToken !== handledRefreshToken.current;
 
     async function loadStockCheckProducts() {
-      if (cachedResult) {
+      if (!shouldBypassCache && cachedResult) {
         setError("");
         setIsLoading(false);
         const nextProducts = applyLocalState(
@@ -404,7 +429,7 @@ export function StockCheckPage({
           search: "",
           sort,
           referenceDate,
-          bypassCache: false
+          bypassCache: shouldBypassCache
         });
 
         if (!ignore) {
@@ -442,6 +467,7 @@ export function StockCheckPage({
         }
       } finally {
         if (!ignore) {
+          handledRefreshToken.current = refreshToken;
           setIsLoading(false);
         }
       }
@@ -452,7 +478,7 @@ export function StockCheckPage({
     return () => {
       ignore = true;
     };
-  }, [currentPage, sort]);
+  }, [currentPage, refreshToken, sort]);
 
   useEffect(() => {
     if (!productStockUpdate) {
@@ -499,6 +525,12 @@ export function StockCheckPage({
     }
 
     updateProducts(nextProducts);
+
+    if (productStockUpdate.followUpDate !== undefined) {
+      stockCheckCache.current.clear();
+      borrowedSkusByCacheKey.current.clear();
+      setRefreshToken((current) => current + 1);
+    }
 
     if (
       isFlowThroughStockCheckSort(currentSort) &&
