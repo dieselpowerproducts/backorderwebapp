@@ -867,6 +867,66 @@ body:has(.notes-popup-page),
   margin: 0;
 }
 
+.shopify-availability-panel {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.shopify-availability-actions {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.shopify-availability-actions button {
+  background: #242f3d;
+  border: 1px solid #5d7188;
+  border-radius: 6px;
+  color: #dcecff;
+  font-size: 13px;
+  font-weight: 700;
+  min-height: 36px;
+  padding: 8px 6px;
+}
+
+.shopify-availability-actions button:not(:disabled):hover {
+  background: #2e4259;
+  color: white;
+}
+
+.shopify-availability-actions button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.built-to-order-lead-time {
+  display: grid;
+  gap: 5px;
+}
+
+.built-to-order-lead-time span,
+.shopify-availability-note {
+  color: #cccccc;
+  font-size: 13px;
+}
+
+.built-to-order-lead-time input {
+  background: #2b2b2b;
+  border: 1px solid #444444;
+  border-radius: 6px;
+  color: white;
+  padding: 8px 10px;
+}
+
+.shopify-availability-note {
+  margin: 0;
+}
+
+.shopify-availability-note.success {
+  color: #9fdbb9;
+}
+
 .assigned-vendors-list {
   display: grid;
   gap: 8px;

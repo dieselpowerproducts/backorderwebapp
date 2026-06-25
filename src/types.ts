@@ -58,6 +58,11 @@ export type BackordersResponse = {
 };
 
 export type ProductAvailability = "Available" | "Backorder" | "Built to Order";
+export type ShopifyAvailabilityStatus =
+  | "in_stock"
+  | "out_of_stock"
+  | "backordered"
+  | "built_to_order";
 export type StockCheckSort =
   | "yesterday"
   | "today"
@@ -96,6 +101,15 @@ export type ProductsResponse = {
   total: number;
   totalPages: number;
   isLastPage: boolean;
+};
+
+export type ShopifyAvailabilityResponse = {
+  availability: ShopifyAvailabilityStatus;
+  availabilityText: string;
+  matchedSku: string;
+  productId: string;
+  productTitle: string;
+  updatedInventoryPolicyCount: number;
 };
 
 export type Note = {

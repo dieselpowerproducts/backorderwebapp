@@ -9,6 +9,8 @@ import type {
   NotesBootstrapResponse,
   ProductDetails,
   ProductsResponse,
+  ShopifyAvailabilityResponse,
+  ShopifyAvailabilityStatus,
   StockCheckSort,
   VendorAutoInventorySettings,
   VendorContact,
@@ -275,6 +277,24 @@ export function assignProductVendor({
       "Content-Type": "application/json"
     },
     body: JSON.stringify({ sku, vendorId })
+  });
+}
+
+export function updateShopifyProductAvailability({
+  availability,
+  followUpDate,
+  sku
+}: {
+  availability: ShopifyAvailabilityStatus;
+  followUpDate: string;
+  sku: string;
+}) {
+  return request<ShopifyAvailabilityResponse>("/shopify/products/availability", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ availability, followUpDate, sku })
   });
 }
 

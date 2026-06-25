@@ -21,6 +21,7 @@ import {
   saveEmailTemplate,
   sendVendorStockCheckEmail,
   setVendorDefaultContact,
+  updateShopifyProductAvailability,
   updateProductFollowUp,
   updateProductVendorStock,
   updateNote
@@ -34,6 +35,7 @@ import type {
   ProductKitChild,
   ProductParentKit,
   ProductStockUpdate,
+  ShopifyAvailabilityStatus,
   VendorContact,
   VendorSummary,
   ProductVendor
@@ -67,6 +69,15 @@ type EmailComposerState = {
 };
 
 const newTemplateValue = "__new_template__";
+const shopifyAvailabilityOptions: Array<{
+  label: string;
+  status: ShopifyAvailabilityStatus;
+}> = [
+  { label: "In Stock", status: "in_stock" },
+  { label: "Out of Stock", status: "out_of_stock" },
+  { label: "Backordered", status: "backordered" },
+  { label: "Built to Order", status: "built_to_order" }
+];
 
 function formatFollowUpDate(value: string) {
   if (!value) {
@@ -269,6 +280,20 @@ function getVendorDrivenAvailability(vendors: ProductVendor[]) {
   } as const;
 }
 
+function getShopifyAvailabilityStatus(
+  productDetails: ProductDetails
+): ShopifyAvailabilityStatus {
+  if (productDetails.qtyAvailable > 0) {
+    return "in_stock";
+  }
+
+  if (productDetails.availability === "Built to Order") {
+    return "built_to_order";
+  }
+
+  return "backordered";
+}
+
 function normalizeMentionQuery(value: string) {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -416,6 +441,13 @@ export function NotesModal({
   const [isVendorSearchLoading, setIsVendorSearchLoading] = useState(false);
   const [isVendorAssigning, setIsVendorAssigning] = useState(false);
   const [vendorAssignStatus, setVendorAssignStatus] = useState("");
+  const [isShopifyAvailabilitySaving, setIsShopifyAvailabilitySaving] =
+    useState(false);
+  const [shopifyAvailabilityStatus, setShopifyAvailabilityStatus] =
+    useState("");
+  const [isBuiltToOrderLeadTimeOpen, setIsBuiltToOrderLeadTimeOpen] =
+    useState(false);
+  const [builtToOrderLeadTime, setBuiltToOrderLeadTime] = useState("");
   const [emailError, setEmailError] = useState("");
   const [emailStatus, setEmailStatus] = useState("");
   const [isTemplateNameModalOpen, setIsTemplateNameModalOpen] = useState(false);
@@ -548,6 +580,10 @@ export function NotesModal({
     setIsVendorSearchLoading(false);
     setIsVendorAssigning(false);
     setVendorAssignStatus("");
+    setIsShopifyAvailabilitySaving(false);
+    setShopifyAvailabilityStatus("");
+    setIsBuiltToOrderLeadTimeOpen(false);
+    setBuiltToOrderLeadTime("");
   }, [sku]);
 
   useEffect(() => {
@@ -705,10 +741,36 @@ export function NotesModal({
     }
   }
 
+  async function syncShopifyAvailabilityFromDetails(
+    nextProductDetails: ProductDetails,
+    options: { quiet?: boolean } = {}
+  ) {
+    const availability = getShopifyAvailabilityStatus(nextProductDetails);
+
+    try {
+      const result = await updateShopifyProductAvailability({
+        sku: nextProductDetails.sku,
+        availability,
+        followUpDate: nextProductDetails.followUpDate || ""
+      });
+
+      if (!options.quiet) {
+        setShopifyAvailabilityStatus(`Shopify set to ${result.availabilityText}.`);
+      }
+    } catch (err) {
+      setDetailsError(
+        err instanceof Error
+          ? `StockBridge saved, but Shopify availability could not be updated: ${err.message}`
+          : "StockBridge saved, but Shopify availability could not be updated."
+      );
+    }
+  }
+
   async function handleFollowUpDateChange(value: string) {
     setFollowUpDate(value);
     setFollowUpMessage("");
     setDetailsError("");
+    setShopifyAvailabilityStatus("");
     setIsFollowUpSaving(true);
 
     try {
@@ -730,10 +792,18 @@ export function NotesModal({
           : current
       );
       if (productDetails) {
+        const nextProductDetails = {
+          ...productDetails,
+          followUpDate: result.followUpDate || ""
+        };
+
         onProductStockChanged?.({
-          ...getProductDetailsStockUpdate(productDetails),
+          ...getProductDetailsStockUpdate(nextProductDetails),
           followUpDate: result.followUpDate || "",
           followUpSaved: true
+        });
+        await syncShopifyAvailabilityFromDetails(nextProductDetails, {
+          quiet: true
         });
       }
       onFollowUpSaved();
@@ -796,7 +866,17 @@ export function NotesModal({
         ? getProductStockUpdate(productDetails, updatedVendors)
         : null;
 
-      await refreshDetailsAfterStockChange(fallbackDetails, fallbackStockUpdate);
+      const nextProductDetails = await refreshDetailsAfterStockChange(
+        fallbackDetails,
+        fallbackStockUpdate
+      );
+
+      if (nextProductDetails) {
+        await syncShopifyAvailabilityFromDetails(nextProductDetails, {
+          quiet: true
+        });
+      }
+
       onFollowUpSaved();
     } catch (err) {
       setDetailsError(
@@ -823,6 +903,7 @@ export function NotesModal({
       setFollowUpDate(result.followUpDate || "");
       setFollowUpMessage("");
       onProductStockChanged?.(getProductDetailsStockUpdate(result));
+      await syncShopifyAvailabilityFromDetails(result, { quiet: true });
       onFollowUpSaved();
     } catch (err) {
       setDetailsError(
@@ -882,7 +963,7 @@ export function NotesModal({
   async function refreshDetailsAfterStockChange(
     fallbackDetails: ProductDetails | null,
     fallbackStockUpdate: ProductStockUpdate | null
-  ) {
+  ): Promise<ProductDetails | null> {
     try {
       const refreshedDetails = await refreshProductDetails(sku, {
         includeWarehouse: false
@@ -891,6 +972,7 @@ export function NotesModal({
       setProductDetails(refreshedDetails);
       setFollowUpDate(refreshedDetails.followUpDate || "");
       onProductStockChanged?.(getProductDetailsStockUpdate(refreshedDetails));
+      return refreshedDetails;
     } catch (err) {
       if (fallbackDetails) {
         setProductDetails(fallbackDetails);
@@ -905,6 +987,7 @@ export function NotesModal({
           ? `Stock saved, but product availability could not be refreshed: ${err.message}`
           : "Stock saved, but product availability could not be refreshed."
       );
+      return fallbackDetails;
     }
   }
 
@@ -1169,11 +1252,11 @@ export function NotesModal({
   const childProducts = productDetails?.childProducts || [];
   const parentKits = productDetails?.parentKits || [];
   const editableVendors = vendors.filter(canUpdateVendorStock);
-  const hasEditableVendors = editableVendors.length > 0;
-  const areAllEditableVendorsOn =
-    hasEditableVendors && editableVendors.every((vendor) => vendor.quantity > 0);
-  const areAllEditableVendorsOff =
-    hasEditableVendors && editableVendors.every((vendor) => vendor.quantity <= 0);
+  const builtToOrderVendor = vendors.find(
+    (vendor) => vendor.stockSource === "vendor" && vendor.builtToOrder
+  );
+  const builtToOrderLeadTimeValue =
+    builtToOrderVendor?.buildTime || builtToOrderLeadTime;
   const canShowKits = Boolean(productDetails?.isKit && childProducts.length > 0);
   const canShowParentKits = parentKits.length > 0;
   const isRouteMode = mode === "route";
@@ -1210,7 +1293,11 @@ export function NotesModal({
     }
   }
 
-  async function handleAllVendorStockChange(enabled: boolean) {
+  async function handleAllVendorStockChange(
+    enabled: boolean,
+    options: { syncShopify?: boolean } = {}
+  ): Promise<ProductDetails | null> {
+    const shouldSyncShopify = options.syncShopify !== false;
     const vendorsToUpdate = editableVendors.filter(
       (vendor) =>
         (vendor.quantity > 0) !== enabled &&
@@ -1218,7 +1305,7 @@ export function NotesModal({
     );
 
     if (vendorsToUpdate.length === 0 || isBulkVendorStockSaving) {
-      return;
+      return productDetails;
     }
 
     setDetailsError("");
@@ -1269,8 +1356,20 @@ export function NotesModal({
           ? getProductStockUpdate(productDetails, updatedVendors)
           : null;
 
-        await refreshDetailsAfterStockChange(fallbackDetails, fallbackStockUpdate);
+        const nextProductDetails = await refreshDetailsAfterStockChange(
+          fallbackDetails,
+          fallbackStockUpdate
+        );
+
+        if (nextProductDetails && shouldSyncShopify) {
+          await syncShopifyAvailabilityFromDetails(nextProductDetails, {
+            quiet: true
+          });
+        }
+
         onFollowUpSaved();
+
+        return nextProductDetails;
       }
 
       if (savedResults.length !== results.length) {
@@ -1291,6 +1390,65 @@ export function NotesModal({
 
         return next;
       });
+    }
+
+    return productDetails;
+  }
+
+  async function handleShopifyAvailabilityChange(
+    availability: ShopifyAvailabilityStatus
+  ) {
+    if (!productDetails || isShopifyAvailabilitySaving) {
+      return;
+    }
+
+    const isBuiltToOrder = availability === "built_to_order";
+    const hasBuiltToOrderVendor = vendors.some(
+      (vendor) => vendor.stockSource === "vendor" && vendor.builtToOrder
+    );
+
+    if (isBuiltToOrder && !hasBuiltToOrderVendor) {
+      setIsBuiltToOrderLeadTimeOpen(true);
+    }
+
+    setDetailsError("");
+    setShopifyAvailabilityStatus("");
+    setIsShopifyAvailabilitySaving(true);
+
+    try {
+      const shouldEnableStock = availability === "in_stock";
+      const nextProductDetails =
+        availability === "in_stock"
+          ? await handleAllVendorStockChange(true, { syncShopify: false })
+          : await handleAllVendorStockChange(false, { syncShopify: false });
+      const detailsForShopify = nextProductDetails || productDetails;
+      const result = await updateShopifyProductAvailability({
+        sku,
+        availability,
+        followUpDate: detailsForShopify.followUpDate || followUpDate || ""
+      });
+
+      setShopifyAvailabilityStatus(
+        `Shopify set to ${result.availabilityText}${
+          availability === "out_of_stock"
+            ? ` and ${result.updatedInventoryPolicyCount} variant${
+                result.updatedInventoryPolicyCount === 1 ? "" : "s"
+              } set to stop overselling`
+            : ""
+        }.`
+      );
+
+      if (shouldEnableStock && nextProductDetails) {
+        onProductStockChanged?.(getProductDetailsStockUpdate(nextProductDetails));
+      }
+    } catch (err) {
+      setDetailsError(
+        err instanceof Error
+          ? `Unable to update Shopify availability: ${err.message}`
+          : "Unable to update Shopify availability."
+      );
+    } finally {
+      setIsShopifyAvailabilitySaving(false);
     }
   }
 
@@ -1319,42 +1477,57 @@ export function NotesModal({
           <aside className="assigned-vendors-panel" aria-labelledby="assignedVendorsHeading">
             <div className="assigned-vendors-heading">
               <h3 id="assignedVendorsHeading">Assigned vendors</h3>
+            </div>
 
+            <div className="shopify-availability-panel">
               <div
-                className="vendor-stock-switch"
+                className="shopify-availability-actions"
                 role="group"
-                aria-label="All assigned vendor stock override"
-                title="Update all assigned vendor stock values"
+                aria-label="Shopify product availability"
               >
-                <button
-                  type="button"
-                  className={
-                    areAllEditableVendorsOn
-                      ? "vendor-stock-switch-option active"
-                      : "vendor-stock-switch-option"
-                  }
-                  aria-label="Turn on stock for all assigned vendors"
-                  aria-pressed={areAllEditableVendorsOn}
-                  disabled={!hasEditableVendors || isBulkVendorStockSaving}
-                  onClick={() => handleAllVendorStockChange(true)}
-                >
-                  I
-                </button>
-                <button
-                  type="button"
-                  className={
-                    areAllEditableVendorsOff
-                      ? "vendor-stock-switch-option active off"
-                      : "vendor-stock-switch-option"
-                  }
-                  aria-label="Turn off stock for all assigned vendors"
-                  aria-pressed={areAllEditableVendorsOff}
-                  disabled={!hasEditableVendors || isBulkVendorStockSaving}
-                  onClick={() => handleAllVendorStockChange(false)}
-                >
-                  O
-                </button>
+                {shopifyAvailabilityOptions.map((option) => (
+                  <button
+                    key={option.status}
+                    type="button"
+                    disabled={
+                      !productDetails ||
+                      isShopifyAvailabilitySaving ||
+                      isBulkVendorStockSaving
+                    }
+                    onClick={() => handleShopifyAvailabilityChange(option.status)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
               </div>
+
+              {isBuiltToOrderLeadTimeOpen && !builtToOrderVendor && (
+                <label className="built-to-order-lead-time">
+                  <span>Lead time</span>
+                  <input
+                    type="text"
+                    value={builtToOrderLeadTime}
+                    placeholder="4-6 weeks"
+                    onChange={(event) => setBuiltToOrderLeadTime(event.target.value)}
+                  />
+                </label>
+              )}
+
+              {builtToOrderVendor && builtToOrderLeadTimeValue && (
+                <p className="shopify-availability-note">
+                  Built to order lead time: {builtToOrderLeadTimeValue}
+                </p>
+              )}
+
+              {isShopifyAvailabilitySaving && (
+                <p className="shopify-availability-note">Updating Shopify...</p>
+              )}
+
+              {!isShopifyAvailabilitySaving && shopifyAvailabilityStatus && (
+                <p className="shopify-availability-note success">
+                  {shopifyAvailabilityStatus}
+                </p>
+              )}
             </div>
 
             <div className="vendor-add-control">

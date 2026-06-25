@@ -15,6 +15,21 @@ async function resolveOrder(req, res, next) {
   }
 }
 
+async function updateProductAvailability(req, res, next) {
+  try {
+    const result = await shopifyService.updateProductAvailability({
+      sku: req.body.sku,
+      availability: req.body.availability,
+      followUpDate: req.body.followUpDate
+    });
+
+    res.send(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
-  resolveOrder
+  resolveOrder,
+  updateProductAvailability
 };

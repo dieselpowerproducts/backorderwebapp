@@ -7,6 +7,19 @@ loadLocalEnv();
 const DEFAULT_API_VERSION = "2025-10";
 const TOKEN_EXPIRY_SAFETY_MS = 60 * 1000;
 const DEFAULT_RESOLVE_CACHE_DAYS = 7;
+const metafieldNamespace = "custom";
+const availabilityMetafieldKey = "product_availability";
+const availabilityDateMetafieldKey = "product_availability_date";
+const availabilityDateConfirmedMetafieldKey = "availability_date_confirmed";
+const availabilityValues = {
+  in_stock: "In Stock",
+  out_of_stock: "Out of Stock",
+  backordered: "Backorder",
+  built_to_order: "Built to Order"
+};
+const availabilityStatuses = new Set(Object.keys(availabilityValues));
+const shopifyAvailabilityTimezone =
+  process.env.SHOPIFY_AVAILABILITY_TIMEZONE || "America/Los_Angeles";
 
 let accessTokenCache = {
   token: "",
@@ -96,6 +109,126 @@ function normalizeSku(value) {
     .trim()
     .replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/gi, "")
     .toUpperCase();
+}
+
+function normalizeAvailabilityStatus(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+
+  if (normalized === "available" || normalized === "instock") {
+    return "in_stock";
+  }
+
+  if (normalized === "outofstock") {
+    return "out_of_stock";
+  }
+
+  if (normalized === "backorder") {
+    return "backordered";
+  }
+
+  if (normalized === "builttoorder") {
+    return "built_to_order";
+  }
+
+  if (availabilityStatuses.has(normalized)) {
+    return normalized;
+  }
+
+  throw createHttpError(400, "Shopify availability status is invalid.");
+}
+
+function normalizeDateText(value) {
+  const dateText = String(value || "").trim();
+
+  if (!dateText) {
+    return "";
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) {
+    throw createHttpError(400, "Availability date must use YYYY-MM-DD format.");
+  }
+
+  const date = new Date(`${dateText}T00:00:00Z`);
+
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== dateText) {
+    throw createHttpError(400, "Availability date is invalid.");
+  }
+
+  return dateText;
+}
+
+function getTimeZoneOffsetMinutes(timeZone, date) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    hourCycle: "h23"
+  });
+  const parts = Object.fromEntries(
+    formatter.formatToParts(date).map((part) => [part.type, part.value])
+  );
+  const zonedAsUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second)
+  );
+
+  return Math.round((zonedAsUtc - date.getTime()) / 60000);
+}
+
+function formatOffset(minutes) {
+  const sign = minutes >= 0 ? "+" : "-";
+  const absoluteMinutes = Math.abs(minutes);
+  const hours = String(Math.floor(absoluteMinutes / 60)).padStart(2, "0");
+  const remainder = String(absoluteMinutes % 60).padStart(2, "0");
+
+  return `${sign}${hours}${remainder}`;
+}
+
+function formatAvailabilityDateTime(value) {
+  const dateText = normalizeDateText(value);
+
+  if (!dateText) {
+    return "";
+  }
+
+  const [year, month, day] = dateText.split("-").map(Number);
+  const offsetProbe = new Date(Date.UTC(year, month - 1, day, 20, 0, 0));
+  const offsetMinutes = getTimeZoneOffsetMinutes(
+    shopifyAvailabilityTimezone,
+    offsetProbe
+  );
+
+  return `${dateText}T13:00${formatOffset(offsetMinutes)}`;
+}
+
+function formatUserErrors(userErrors) {
+  return (userErrors || [])
+    .map((error) => {
+      const field = Array.isArray(error?.field) ? error.field.join(".") : "";
+      const message = String(error?.message || "").trim();
+
+      return [field, message].filter(Boolean).join(": ");
+    })
+    .filter(Boolean)
+    .join("; ");
+}
+
+function assertNoUserErrors(userErrors, fallbackMessage) {
+  if (Array.isArray(userErrors) && userErrors.length > 0) {
+    throw createHttpError(502, formatUserErrors(userErrors) || fallbackMessage);
+  }
 }
 
 function getResolveCacheDays() {
@@ -377,6 +510,340 @@ async function shopifyGraphQL(query, variables) {
   return payload?.data;
 }
 
+function getProductSearchQuery(sku) {
+  return `sku:${quoteSearchValue(sku)}`;
+}
+
+async function findProductBySku(sku) {
+  const safeSku = normalizeSku(sku);
+
+  if (!safeSku) {
+    throw createHttpError(400, "Product SKU is required.");
+  }
+
+  const data = await shopifyGraphQL(
+    `
+      query ProductBySku($query: String!) {
+        productVariants(first: 25, query: $query) {
+          nodes {
+            id
+            sku
+            product {
+              id
+              title
+            }
+          }
+        }
+      }
+    `,
+    {
+      query: getProductSearchQuery(safeSku)
+    }
+  );
+  const variants = Array.isArray(data?.productVariants?.nodes)
+    ? data.productVariants.nodes
+    : [];
+  const variant =
+    variants.find((item) => normalizeSku(item?.sku) === safeSku) || variants[0];
+
+  if (!variant?.product?.id) {
+    throw createHttpError(404, "No Shopify product matched this SKU.");
+  }
+
+  return {
+    productId: variant.product.id,
+    productTitle: variant.product.title || "",
+    matchedVariantId: variant.id || "",
+    matchedSku: variant.sku || safeSku
+  };
+}
+
+async function getProductVariants(productId) {
+  const variants = [];
+  let after = null;
+
+  while (true) {
+    const data = await shopifyGraphQL(
+      `
+        query ProductVariants($productId: ID!, $after: String) {
+          product(id: $productId) {
+            id
+            variants(first: 250, after: $after) {
+              nodes {
+                id
+                sku
+                inventoryPolicy
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
+          }
+        }
+      `,
+      {
+        productId,
+        after
+      }
+    );
+    const product = data?.product;
+
+    if (!product?.id) {
+      throw createHttpError(404, "Shopify product was not found.");
+    }
+
+    variants.push(...(product.variants?.nodes || []));
+
+    if (!product.variants?.pageInfo?.hasNextPage) {
+      break;
+    }
+
+    after = product.variants.pageInfo.endCursor;
+  }
+
+  return variants;
+}
+
+async function setMetafields(metafields) {
+  if (metafields.length === 0) {
+    return [];
+  }
+
+  const data = await shopifyGraphQL(
+    `
+      mutation SetProductMetafields($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) {
+          metafields {
+            id
+            namespace
+            key
+            value
+          }
+          userErrors {
+            field
+            message
+            code
+          }
+        }
+      }
+    `,
+    {
+      metafields
+    }
+  );
+  const payload = data?.metafieldsSet || {};
+
+  assertNoUserErrors(payload.userErrors, "Shopify metafields could not be saved.");
+
+  return payload.metafields || [];
+}
+
+async function deleteMetafields(productId, keys) {
+  const metafields = keys.map((key) => ({
+    ownerId: productId,
+    namespace: metafieldNamespace,
+    key
+  }));
+
+  if (metafields.length === 0) {
+    return [];
+  }
+
+  const data = await shopifyGraphQL(
+    `
+      mutation DeleteProductMetafields($metafields: [MetafieldIdentifierInput!]!) {
+        metafieldsDelete(metafields: $metafields) {
+          deletedMetafields {
+            ownerId
+            namespace
+            key
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `,
+    {
+      metafields
+    }
+  );
+  const payload = data?.metafieldsDelete || {};
+
+  assertNoUserErrors(payload.userErrors, "Shopify metafields could not be cleared.");
+
+  return payload.deletedMetafields || [];
+}
+
+async function updateVariantInventoryPolicy(productId, variants, inventoryPolicy) {
+  if (!inventoryPolicy || variants.length === 0) {
+    return [];
+  }
+
+  const updatedVariants = [];
+
+  for (let index = 0; index < variants.length; index += 250) {
+    const chunk = variants.slice(index, index + 250);
+    const data = await shopifyGraphQL(
+      `
+        mutation UpdateProductVariantInventoryPolicy(
+          $productId: ID!,
+          $variants: [ProductVariantsBulkInput!]!
+        ) {
+          productVariantsBulkUpdate(
+            productId: $productId,
+            variants: $variants,
+            allowPartialUpdates: false
+          ) {
+            productVariants {
+              id
+              inventoryPolicy
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+      `,
+      {
+        productId,
+        variants: chunk.map((variant) => ({
+          id: variant.id,
+          inventoryPolicy
+        }))
+      }
+    );
+    const payload = data?.productVariantsBulkUpdate || {};
+
+    assertNoUserErrors(
+      payload.userErrors,
+      "Shopify variant inventory policy could not be saved."
+    );
+    updatedVariants.push(...(payload.productVariants || []));
+  }
+
+  return updatedVariants;
+}
+
+function getMetafieldChanges({ productId, availability, followUpDate }) {
+  const status = normalizeAvailabilityStatus(availability);
+  const safeFollowUpDate = normalizeDateText(followUpDate);
+  const metafields = [
+    {
+      ownerId: productId,
+      namespace: metafieldNamespace,
+      key: availabilityMetafieldKey,
+      type: "single_line_text_field",
+      value: availabilityValues[status]
+    }
+  ];
+  const deleteKeys = [];
+
+  if (status === "backordered") {
+    if (safeFollowUpDate) {
+      metafields.push(
+        {
+          ownerId: productId,
+          namespace: metafieldNamespace,
+          key: availabilityDateMetafieldKey,
+          type: "date_time",
+          value: formatAvailabilityDateTime(safeFollowUpDate)
+        },
+        {
+          ownerId: productId,
+          namespace: metafieldNamespace,
+          key: availabilityDateConfirmedMetafieldKey,
+          type: "boolean",
+          value: "true"
+        }
+      );
+    } else {
+      deleteKeys.push(
+        availabilityDateMetafieldKey,
+        availabilityDateConfirmedMetafieldKey
+      );
+    }
+  } else if (status === "out_of_stock") {
+    if (safeFollowUpDate) {
+      metafields.push({
+        ownerId: productId,
+        namespace: metafieldNamespace,
+        key: availabilityDateMetafieldKey,
+        type: "date_time",
+        value: formatAvailabilityDateTime(safeFollowUpDate)
+      });
+    } else {
+      deleteKeys.push(availabilityDateMetafieldKey);
+    }
+
+    metafields.push({
+      ownerId: productId,
+      namespace: metafieldNamespace,
+      key: availabilityDateConfirmedMetafieldKey,
+      type: "boolean",
+      value: "false"
+    });
+  } else {
+    deleteKeys.push(
+      availabilityDateMetafieldKey,
+      availabilityDateConfirmedMetafieldKey
+    );
+  }
+
+  return {
+    deleteKeys,
+    metafields,
+    status
+  };
+}
+
+function getInventoryPolicyForAvailability(status) {
+  if (status === "out_of_stock") {
+    return "DENY";
+  }
+
+  if (status === "backordered" || status === "built_to_order") {
+    return "CONTINUE";
+  }
+
+  return "";
+}
+
+async function updateProductAvailability({ sku, availability, followUpDate }) {
+  const productMatch = await findProductBySku(sku);
+  const variants = await getProductVariants(productMatch.productId);
+  const { deleteKeys, metafields, status } = getMetafieldChanges({
+    productId: productMatch.productId,
+    availability,
+    followUpDate
+  });
+  const inventoryPolicy = getInventoryPolicyForAvailability(status);
+
+  const savedMetafields = await setMetafields(metafields);
+  const deletedMetafields = await deleteMetafields(productMatch.productId, deleteKeys);
+  const updatedVariants = inventoryPolicy
+    ? await updateVariantInventoryPolicy(
+        productMatch.productId,
+        variants,
+        inventoryPolicy
+      )
+    : [];
+
+  return {
+    availability: status,
+    availabilityText: availabilityValues[status],
+    deletedMetafields,
+    matchedSku: productMatch.matchedSku,
+    productId: productMatch.productId,
+    productTitle: productMatch.productTitle,
+    savedMetafields,
+    updatedInventoryPolicyCount: updatedVariants.length
+  };
+}
+
 function formatAdminOrderUrl(storeDomain, legacyResourceId) {
   return `https://${storeDomain}/admin/orders/${encodeURIComponent(legacyResourceId)}`;
 }
@@ -598,5 +1065,6 @@ async function resolveOrder({ orderNumber, customerEmail, createdAt, skus }) {
 }
 
 module.exports = {
-  resolveOrder
+  resolveOrder,
+  updateProductAvailability
 };
