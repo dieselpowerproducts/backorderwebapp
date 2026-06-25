@@ -281,10 +281,15 @@ function getVendorDrivenAvailability(vendors: ProductVendor[]) {
 }
 
 function getShopifyAvailabilityStatus(
-  productDetails: ProductDetails
+  productDetails: ProductDetails,
+  currentAvailability: ShopifyAvailabilityStatus | "" = ""
 ): ShopifyAvailabilityStatus {
   if (productDetails.qtyAvailable > 0) {
     return "in_stock";
+  }
+
+  if (currentAvailability === "out_of_stock") {
+    return "out_of_stock";
   }
 
   if (productDetails.availability === "Built to Order") {
@@ -292,6 +297,21 @@ function getShopifyAvailabilityStatus(
   }
 
   return "backordered";
+}
+
+function getShopifyAvailabilityButtonClass(
+  status: ShopifyAvailabilityStatus,
+  activeStatus: ShopifyAvailabilityStatus | ""
+) {
+  const statusClass = status.replace(/_/g, "-");
+
+  return [
+    "shopify-availability-button",
+    `availability-${statusClass}`,
+    status === activeStatus ? "active" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function normalizeMentionQuery(value: string) {
@@ -445,6 +465,10 @@ export function NotesModal({
     useState(false);
   const [shopifyAvailabilityStatus, setShopifyAvailabilityStatus] =
     useState("");
+  const [
+    currentShopifyAvailability,
+    setCurrentShopifyAvailability
+  ] = useState<ShopifyAvailabilityStatus | "">("");
   const [isBuiltToOrderLeadTimeOpen, setIsBuiltToOrderLeadTimeOpen] =
     useState(false);
   const [builtToOrderLeadTime, setBuiltToOrderLeadTime] = useState("");
@@ -480,6 +504,7 @@ export function NotesModal({
       setProductDetails(result);
       setFollowUpDate(result.followUpDate || "");
       setFollowUpNoEta(Boolean(result.followUpNoEta));
+      setCurrentShopifyAvailability(result.shopifyAvailabilityStatus || "");
       onProductStockChanged?.(getProductDetailsStockUpdate(result));
     } catch (err) {
       setDetailsError(
@@ -488,6 +513,7 @@ export function NotesModal({
       setProductDetails(null);
       setFollowUpDate("");
       setFollowUpNoEta(false);
+      setCurrentShopifyAvailability("");
     } finally {
       setIsProductDetailsLoading(false);
     }
@@ -504,6 +530,9 @@ export function NotesModal({
       setProductDetails(result.productDetails);
       setFollowUpDate(result.productDetails.followUpDate || "");
       setFollowUpNoEta(Boolean(result.productDetails.followUpNoEta));
+      setCurrentShopifyAvailability(
+        result.productDetails.shopifyAvailabilityStatus || ""
+      );
       onProductStockChanged?.(getProductDetailsStockUpdate(result.productDetails));
     } catch (err) {
       const message =
@@ -513,6 +542,7 @@ export function NotesModal({
       setProductDetails(null);
       setFollowUpDate("");
       setFollowUpNoEta(false);
+      setCurrentShopifyAvailability("");
     } finally {
       setIsProductDetailsLoading(false);
     }
@@ -587,6 +617,7 @@ export function NotesModal({
     setFollowUpNoEta(false);
     setIsShopifyAvailabilitySaving(false);
     setShopifyAvailabilityStatus("");
+    setCurrentShopifyAvailability("");
     setIsBuiltToOrderLeadTimeOpen(false);
     setBuiltToOrderLeadTime("");
   }, [sku]);
@@ -761,7 +792,10 @@ export function NotesModal({
     nextProductDetails: ProductDetails,
     options: { quiet?: boolean } = {}
   ) {
-    const availability = getShopifyAvailabilityStatus(nextProductDetails);
+    const availability = getShopifyAvailabilityStatus(
+      nextProductDetails,
+      currentShopifyAvailability || nextProductDetails.shopifyAvailabilityStatus || ""
+    );
 
     try {
       const result = await updateShopifyProductAvailability({
@@ -770,6 +804,16 @@ export function NotesModal({
         followUpDate: getShopifyFollowUpDate(nextProductDetails, availability),
         productName: nextProductDetails.name || ""
       });
+
+      setCurrentShopifyAvailability(result.availability);
+      setProductDetails((current) =>
+        current
+          ? {
+              ...current,
+              shopifyAvailabilityStatus: result.availability
+            }
+          : current
+      );
 
       if (!options.quiet) {
         setShopifyAvailabilityStatus(`Shopify set to ${result.availabilityText}.`);
@@ -967,6 +1011,7 @@ export function NotesModal({
       setProductDetails(result);
       setFollowUpDate(result.followUpDate || "");
       setFollowUpNoEta(Boolean(result.followUpNoEta));
+      setCurrentShopifyAvailability(result.shopifyAvailabilityStatus || "");
       onProductStockChanged?.(getProductDetailsStockUpdate(result));
       await syncShopifyAvailabilityFromDetails(result, { quiet: true });
       onFollowUpSaved();
@@ -1006,6 +1051,7 @@ export function NotesModal({
       setProductDetails(result);
       setFollowUpDate(result.followUpDate || "");
       setFollowUpNoEta(Boolean(result.followUpNoEta));
+      setCurrentShopifyAvailability(result.shopifyAvailabilityStatus || "");
       setVendorSearchInput("");
       setVendorSearchResults([]);
       setIsVendorSearchOpen(false);
@@ -1038,12 +1084,18 @@ export function NotesModal({
       setProductDetails(refreshedDetails);
       setFollowUpDate(refreshedDetails.followUpDate || "");
       setFollowUpNoEta(Boolean(refreshedDetails.followUpNoEta));
+      setCurrentShopifyAvailability(
+        refreshedDetails.shopifyAvailabilityStatus || currentShopifyAvailability
+      );
       onProductStockChanged?.(getProductDetailsStockUpdate(refreshedDetails));
       return refreshedDetails;
     } catch (err) {
       if (fallbackDetails) {
         setProductDetails(fallbackDetails);
         setFollowUpNoEta(Boolean(fallbackDetails.followUpNoEta));
+        setCurrentShopifyAvailability(
+          fallbackDetails.shopifyAvailabilityStatus || currentShopifyAvailability
+        );
       }
 
       if (fallbackStockUpdate) {
@@ -1497,6 +1549,15 @@ export function NotesModal({
         productName: detailsForShopify.name || ""
       });
 
+      setCurrentShopifyAvailability(result.availability);
+      setProductDetails((current) =>
+        current
+          ? {
+              ...current,
+              shopifyAvailabilityStatus: result.availability
+            }
+          : current
+      );
       setShopifyAvailabilityStatus(
         `Shopify set to ${result.availabilityText} on ${
           result.productTitle || result.matchedSku
@@ -1566,6 +1627,11 @@ export function NotesModal({
                   <button
                     key={option.status}
                     type="button"
+                    className={getShopifyAvailabilityButtonClass(
+                      option.status,
+                      currentShopifyAvailability
+                    )}
+                    aria-pressed={option.status === currentShopifyAvailability}
                     disabled={
                       !productDetails ||
                       isShopifyAvailabilitySaving ||

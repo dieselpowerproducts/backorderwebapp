@@ -895,6 +895,30 @@ body:has(.notes-popup-page),
   color: white;
 }
 
+.shopify-availability-actions button.active.availability-in-stock {
+  background: #1f6f4a;
+  border-color: #4fb77f;
+  color: #e9fff4;
+}
+
+.shopify-availability-actions button.active.availability-out-of-stock {
+  background: #7a2830;
+  border-color: #d0606b;
+  color: #ffecee;
+}
+
+.shopify-availability-actions button.active.availability-backordered {
+  background: #72551e;
+  border-color: #d8ab47;
+  color: #fff4d9;
+}
+
+.shopify-availability-actions button.active.availability-built-to-order {
+  background: #2c5877;
+  border-color: #74a8ca;
+  color: #e7f6ff;
+}
+
 .shopify-availability-actions button:disabled {
   cursor: wait;
   opacity: 0.65;

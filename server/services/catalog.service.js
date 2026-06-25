@@ -1,5 +1,6 @@
 const { getSql } = require("../db/neon");
 const followUpsService = require("./followUps.service");
+const shopifyAvailabilityStateService = require("./shopifyAvailabilityState.service");
 const skunexus = require("./skunexus.service");
 const stockCheckEmailsService = require("./stockCheckEmails.service");
 const vendorSettingsService = require("./vendorSettings.service");
@@ -2703,12 +2704,14 @@ async function getProductDetails(sku) {
     vendorProducts,
     warehouseStock,
     followUpInfo,
+    shopifyAvailabilityStatus,
     parentKits
   ] = await Promise.all([
     buildProductGraph([product]),
     queryVendorProductsByProductId(product.id),
     queryWarehouseStockByProductId(product.id),
     followUpsService.getFollowUpInfoForSku(safeSku),
+    shopifyAvailabilityStateService.getAvailabilityStatusForSku(safeSku),
     getProductParentKitsForSku(safeSku)
   ]);
   const productNode =
@@ -2794,6 +2797,7 @@ async function getProductDetails(sku) {
     isKit: Boolean(productNode?.is_kit),
     followUpDate: followUpInfo.followUpDate,
     followUpNoEta: followUpInfo.followUpNoEta,
+    shopifyAvailabilityStatus,
     childProducts,
     parentKits,
     vendors: assignedStockSources

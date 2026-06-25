@@ -187,6 +187,7 @@ export type ProductDetails = {
   isKit: boolean;
   followUpDate: string;
   followUpNoEta: boolean;
+  shopifyAvailabilityStatus: ShopifyAvailabilityStatus | "";
   childProducts: ProductKitChild[];
   parentKits: ProductParentKit[];
   vendors: ProductVendor[];

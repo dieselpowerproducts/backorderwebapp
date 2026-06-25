@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const { loadLocalEnv } = require("../config/env");
 const { getSql } = require("../db/neon");
+const shopifyAvailabilityStateService = require("./shopifyAvailabilityState.service");
 
 loadLocalEnv();
 
@@ -1022,9 +1023,14 @@ async function updateProductAvailability({
         inventoryPolicy
       )
     : [];
+  const savedAvailabilityStatus =
+    await shopifyAvailabilityStateService.setAvailabilityStatus({
+      sku,
+      availability: status
+    });
 
   return {
-    availability: status,
+    availability: savedAvailabilityStatus || status,
     availabilityText: availabilityValues[status],
     deletedMetafields,
     duplicateSkuMatchCount: productMatch.duplicateSkuMatchCount,
