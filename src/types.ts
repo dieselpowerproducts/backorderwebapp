@@ -109,9 +109,11 @@ export type ShopifyAvailabilityResponse = {
   duplicateSkuMatchCount: number;
   handle: string;
   matchedSku: string;
+  matchedVariantId: string;
   productId: string;
   productStatus: string;
   productTitle: string;
+  updatedMetafieldOwnerCount: number;
   updatedInventoryPolicyCount: number;
 };
 

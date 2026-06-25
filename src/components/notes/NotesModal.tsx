@@ -1433,6 +1433,8 @@ export function NotesModal({
       setShopifyAvailabilityStatus(
         `Shopify set to ${result.availabilityText} on ${
           result.productTitle || result.matchedSku
+        } for ${result.updatedMetafieldOwnerCount} variant${
+          result.updatedMetafieldOwnerCount === 1 ? "" : "s"
         }${
           result.duplicateSkuMatchCount > 1
             ? ` (${result.duplicateSkuMatchCount} SKU matches found)`

@@ -363,6 +363,16 @@ function quoteSearchValue(value) {
   return `"${String(value).replace(/(["\\])/g, "\\$1")}"`;
 }
 
+function chunkItems(items, size) {
+  const chunks = [];
+
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+
+  return chunks;
+}
+
 function assertLookupInput({ orderNumber, customerEmail, createdAt, skus }) {
   if (!normalizeOrderNumber(orderNumber)) {
     throw createHttpError(400, "Order number is required.");
@@ -631,131 +641,152 @@ async function setMetafields(metafields) {
     return [];
   }
 
-  const data = await shopifyGraphQL(
-    `
-      mutation SetProductMetafields($metafields: [MetafieldsSetInput!]!) {
-        metafieldsSet(metafields: $metafields) {
-          metafields {
-            id
-            namespace
-            key
-            value
-          }
-          userErrors {
-            field
-            message
-            code
+  const savedMetafields = [];
+
+  for (const chunk of chunkItems(metafields, 25)) {
+    const data = await shopifyGraphQL(
+      `
+        mutation SetProductMetafields($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            metafields {
+              id
+              namespace
+              key
+              value
+            }
+            userErrors {
+              field
+              message
+              code
+            }
           }
         }
-      }
-    `,
-    {
-      metafields
-    },
-    shopifyAvailabilityProfile
-  );
-  const payload = data?.metafieldsSet || {};
+      `,
+      {
+        metafields: chunk
+      },
+      shopifyAvailabilityProfile
+    );
+    const payload = data?.metafieldsSet || {};
 
-  assertNoUserErrors(payload.userErrors, "Shopify metafields could not be saved.");
+    assertNoUserErrors(payload.userErrors, "Shopify metafields could not be saved.");
+    savedMetafields.push(...(payload.metafields || []));
+  }
 
-  return payload.metafields || [];
+  return savedMetafields;
 }
 
-async function deleteMetafields(productId, keys) {
-  const metafields = keys.map((key) => ({
-    ownerId: productId,
-    namespace: metafieldNamespace,
-    key
-  }));
+async function deleteMetafields(ownerIds, keys) {
+  const metafields = ownerIds.flatMap((ownerId) =>
+    keys.map((key) => ({
+      ownerId,
+      namespace: metafieldNamespace,
+      key
+    }))
+  );
 
   if (metafields.length === 0) {
     return [];
   }
 
-  const data = await shopifyGraphQL(
-    `
-      mutation DeleteProductMetafields($metafields: [MetafieldIdentifierInput!]!) {
-        metafieldsDelete(metafields: $metafields) {
-          deletedMetafields {
-            ownerId
-            namespace
-            key
-          }
-          userErrors {
-            field
-            message
+  const deletedMetafields = [];
+
+  for (const chunk of chunkItems(metafields, 25)) {
+    const data = await shopifyGraphQL(
+      `
+        mutation DeleteProductMetafields($metafields: [MetafieldIdentifierInput!]!) {
+          metafieldsDelete(metafields: $metafields) {
+            deletedMetafields {
+              ownerId
+              namespace
+              key
+            }
+            userErrors {
+              field
+              message
+            }
           }
         }
-      }
-    `,
-    {
-      metafields
-    },
-    shopifyAvailabilityProfile
-  );
-  const payload = data?.metafieldsDelete || {};
+      `,
+      {
+        metafields: chunk
+      },
+      shopifyAvailabilityProfile
+    );
+    const payload = data?.metafieldsDelete || {};
 
-  assertNoUserErrors(payload.userErrors, "Shopify metafields could not be cleared.");
-
-  return payload.deletedMetafields || [];
-}
-
-async function getProductAvailabilityMetafields(productId) {
-  const data = await shopifyGraphQL(
-    `
-      query ProductAvailabilityMetafields($productId: ID!) {
-        product(id: $productId) {
-          id
-          productAvailability: metafield(
-            namespace: "custom"
-            key: "product_availability"
-          ) {
-            id
-            key
-            namespace
-            type
-            value
-          }
-          productAvailabilityDate: metafield(
-            namespace: "custom"
-            key: "product_availability_date"
-          ) {
-            id
-            key
-            namespace
-            type
-            value
-          }
-          availabilityDateConfirmed: metafield(
-            namespace: "custom"
-            key: "availability_date_confirmed"
-          ) {
-            id
-            key
-            namespace
-            type
-            value
-          }
-        }
-      }
-    `,
-    {
-      productId
-    },
-    shopifyAvailabilityProfile
-  );
-  const product = data?.product;
-
-  if (!product?.id) {
-    throw createHttpError(404, "Shopify product was not found after saving.");
+    assertNoUserErrors(payload.userErrors, "Shopify metafields could not be cleared.");
+    deletedMetafields.push(...(payload.deletedMetafields || []));
   }
 
-  return {
-    [availabilityMetafieldKey]: product.productAvailability || null,
-    [availabilityDateMetafieldKey]: product.productAvailabilityDate || null,
-    [availabilityDateConfirmedMetafieldKey]:
-      product.availabilityDateConfirmed || null
-  };
+  return deletedMetafields;
+}
+
+async function getVariantAvailabilityMetafields(variantIds) {
+  const metafieldsByVariantId = {};
+
+  for (const chunk of chunkItems(variantIds, 100)) {
+    const data = await shopifyGraphQL(
+      `
+        query VariantAvailabilityMetafields($variantIds: [ID!]!) {
+          nodes(ids: $variantIds) {
+            id
+            ... on ProductVariant {
+              productAvailability: metafield(
+                namespace: "custom"
+                key: "product_availability"
+              ) {
+                id
+                key
+                namespace
+                type
+                value
+              }
+              productAvailabilityDate: metafield(
+                namespace: "custom"
+                key: "product_availability_date"
+              ) {
+                id
+                key
+                namespace
+                type
+                value
+              }
+              availabilityDateConfirmed: metafield(
+                namespace: "custom"
+                key: "availability_date_confirmed"
+              ) {
+                id
+                key
+                namespace
+                type
+                value
+              }
+            }
+          }
+        }
+      `,
+      {
+        variantIds: chunk
+      },
+      shopifyAvailabilityProfile
+    );
+
+    for (const node of data?.nodes || []) {
+      if (!node?.id) {
+        continue;
+      }
+
+      metafieldsByVariantId[node.id] = {
+        [availabilityMetafieldKey]: node.productAvailability || null,
+        [availabilityDateMetafieldKey]: node.productAvailabilityDate || null,
+        [availabilityDateConfirmedMetafieldKey]:
+          node.availabilityDateConfirmed || null
+      };
+    }
+  }
+
+  return metafieldsByVariantId;
 }
 
 function metafieldValueMatches(expectedMetafield, verifiedMetafield) {
@@ -773,24 +804,32 @@ function metafieldValueMatches(expectedMetafield, verifiedMetafield) {
   return verifiedValue === expectedValue;
 }
 
-function verifyMetafieldChanges({ deleteKeys, metafields, verifiedMetafields }) {
+function verifyMetafieldChanges({
+  deleteKeys,
+  metafields,
+  ownerIds,
+  verifiedMetafieldsByOwnerId
+}) {
   const mismatches = [];
 
   for (const metafield of metafields) {
-    const verified = verifiedMetafields[metafield.key];
+    const verified =
+      verifiedMetafieldsByOwnerId[metafield.ownerId]?.[metafield.key] || null;
 
     if (!metafieldValueMatches(metafield, verified)) {
       mismatches.push(
-        `${metafield.key} expected ${metafield.value}, got ${
+        `${metafield.ownerId} ${metafield.key} expected ${metafield.value}, got ${
           verified ? verified.value : "blank"
         }`
       );
     }
   }
 
-  for (const key of deleteKeys) {
-    if (verifiedMetafields[key]) {
-      mismatches.push(`${key} was not cleared`);
+  for (const ownerId of ownerIds) {
+    for (const key of deleteKeys) {
+      if (verifiedMetafieldsByOwnerId[ownerId]?.[key]) {
+        mismatches.push(`${ownerId} ${key} was not cleared`);
+      }
     }
   }
 
@@ -856,37 +895,37 @@ async function updateVariantInventoryPolicy(productId, variants, inventoryPolicy
   return updatedVariants;
 }
 
-function getMetafieldChanges({ productId, availability, followUpDate }) {
+function getMetafieldChanges({ ownerIds, availability, followUpDate }) {
   const status = normalizeAvailabilityStatus(availability);
   const safeFollowUpDate = normalizeDateText(followUpDate);
-  const metafields = [
-    {
-      ownerId: productId,
-      namespace: metafieldNamespace,
-      key: availabilityMetafieldKey,
-      type: "single_line_text_field",
-      value: availabilityValues[status]
-    }
-  ];
+  const metafields = ownerIds.map((ownerId) => ({
+    ownerId,
+    namespace: metafieldNamespace,
+    key: availabilityMetafieldKey,
+    type: "single_line_text_field",
+    value: availabilityValues[status]
+  }));
   const deleteKeys = [];
 
   if (status === "backordered") {
     if (safeFollowUpDate) {
       metafields.push(
-        {
-          ownerId: productId,
-          namespace: metafieldNamespace,
-          key: availabilityDateMetafieldKey,
-          type: "date_time",
-          value: formatAvailabilityDateTime(safeFollowUpDate)
-        },
-        {
-          ownerId: productId,
-          namespace: metafieldNamespace,
-          key: availabilityDateConfirmedMetafieldKey,
-          type: "boolean",
-          value: "true"
-        }
+        ...ownerIds.flatMap((ownerId) => [
+          {
+            ownerId,
+            namespace: metafieldNamespace,
+            key: availabilityDateMetafieldKey,
+            type: "date_time",
+            value: formatAvailabilityDateTime(safeFollowUpDate)
+          },
+          {
+            ownerId,
+            namespace: metafieldNamespace,
+            key: availabilityDateConfirmedMetafieldKey,
+            type: "boolean",
+            value: "true"
+          }
+        ])
       );
     } else {
       deleteKeys.push(
@@ -896,24 +935,28 @@ function getMetafieldChanges({ productId, availability, followUpDate }) {
     }
   } else if (status === "out_of_stock") {
     if (safeFollowUpDate) {
-      metafields.push({
-        ownerId: productId,
-        namespace: metafieldNamespace,
-        key: availabilityDateMetafieldKey,
-        type: "date_time",
-        value: formatAvailabilityDateTime(safeFollowUpDate)
-      });
+      metafields.push(
+        ...ownerIds.map((ownerId) => ({
+          ownerId,
+          namespace: metafieldNamespace,
+          key: availabilityDateMetafieldKey,
+          type: "date_time",
+          value: formatAvailabilityDateTime(safeFollowUpDate)
+        }))
+      );
     } else {
       deleteKeys.push(availabilityDateMetafieldKey);
     }
 
-    metafields.push({
-      ownerId: productId,
-      namespace: metafieldNamespace,
-      key: availabilityDateConfirmedMetafieldKey,
-      type: "boolean",
-      value: "false"
-    });
+    metafields.push(
+      ...ownerIds.map((ownerId) => ({
+        ownerId,
+        namespace: metafieldNamespace,
+        key: availabilityDateConfirmedMetafieldKey,
+        type: "boolean",
+        value: "false"
+      }))
+    );
   } else {
     deleteKeys.push(
       availabilityDateMetafieldKey,
@@ -948,19 +991,30 @@ async function updateProductAvailability({
 }) {
   const productMatch = await findProductBySku(sku, { productName });
   const variants = await getProductVariants(productMatch.productId);
+  const variantIds = variants.map((variant) => variant.id).filter(Boolean);
+
+  if (variantIds.length === 0) {
+    throw createHttpError(404, "No Shopify variants matched this product.");
+  }
+
   const { deleteKeys, metafields, status } = getMetafieldChanges({
-    productId: productMatch.productId,
+    ownerIds: variantIds,
     availability,
     followUpDate
   });
   const inventoryPolicy = getInventoryPolicyForAvailability(status);
 
   const savedMetafields = await setMetafields(metafields);
-  const deletedMetafields = await deleteMetafields(productMatch.productId, deleteKeys);
-  const verifiedMetafields = await getProductAvailabilityMetafields(
-    productMatch.productId
+  const deletedMetafields = await deleteMetafields(variantIds, deleteKeys);
+  const verifiedMetafieldsByVariantId = await getVariantAvailabilityMetafields(
+    variantIds
   );
-  verifyMetafieldChanges({ deleteKeys, metafields, verifiedMetafields });
+  verifyMetafieldChanges({
+    deleteKeys,
+    metafields,
+    ownerIds: variantIds,
+    verifiedMetafieldsByOwnerId: verifiedMetafieldsByVariantId
+  });
   const updatedVariants = inventoryPolicy
     ? await updateVariantInventoryPolicy(
         productMatch.productId,
@@ -976,12 +1030,14 @@ async function updateProductAvailability({
     duplicateSkuMatchCount: productMatch.duplicateSkuMatchCount,
     handle: productMatch.handle,
     matchedSku: productMatch.matchedSku,
+    matchedVariantId: productMatch.matchedVariantId,
     productId: productMatch.productId,
     productStatus: productMatch.productStatus,
     productTitle: productMatch.productTitle,
     savedMetafields,
     updatedInventoryPolicyCount: updatedVariants.length,
-    verifiedMetafields
+    updatedMetafieldOwnerCount: variantIds.length,
+    verifiedMetafieldsByVariantId
   };
 }
 
