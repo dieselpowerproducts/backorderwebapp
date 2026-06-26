@@ -1112,6 +1112,7 @@ export function NotesModal({
       setIsVendorSearchOpen(false);
       setVendorAssignStatus(`${vendor.vendor} assigned.`);
       onProductStockChanged?.(getProductDetailsStockUpdate(result));
+      scheduleShopifyAvailabilitySync(result);
       onFollowUpSaved();
     } catch (err) {
       setVendorAssignStatus("");

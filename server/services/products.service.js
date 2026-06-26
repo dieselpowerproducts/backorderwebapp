@@ -198,7 +198,10 @@ async function assignProductVendor({ sku, vendorId }) {
   const safeSku = normalizeRequiredString(sku, "Product SKU is required.");
   const safeVendorId = normalizeRequiredString(vendorId, "Vendor ID is required.");
 
-  await catalogService.getVendorDetails(safeVendorId);
+  const [, vendorSettings] = await Promise.all([
+    catalogService.getVendorDetails(safeVendorId),
+    vendorSettingsService.getVendorSettings(safeVendorId)
+  ]);
   await catalogService.refreshProductBySku(safeSku, {
     includeWarehouse: false
   });
@@ -211,19 +214,28 @@ async function assignProductVendor({ sku, vendorId }) {
     throw error;
   }
 
-  const existingVendorProduct =
+  let assignedVendorProduct =
     await catalogService.getCatalogVendorProductByVendorAndSku(
       safeVendorId,
       safeSku
     );
 
-  if (!existingVendorProduct) {
+  if (!assignedVendorProduct) {
     const productSku = refreshedProduct.sku || safeSku;
 
-    await createSkuNexusVendorProduct({
+    assignedVendorProduct = await createSkuNexusVendorProduct({
       vendorId: safeVendorId,
       productId: refreshedProduct.id,
       productSku
+    });
+  }
+
+  if (!vendorSettings.builtToOrder) {
+    await setVendorProductQuantity({
+      vendorId: safeVendorId,
+      vendorProductId: assignedVendorProduct.id,
+      quantity: enabledVendorStockQuantity,
+      vendorProduct: assignedVendorProduct
     });
   }
 
@@ -231,8 +243,8 @@ async function assignProductVendor({ sku, vendorId }) {
     includeWarehouse: false
   });
 
-  const details = await catalogService.getProductDetails(safeSku);
-  const assignedVendor = (details.vendors || []).find(
+  let details = await catalogService.getProductDetails(safeSku);
+  let assignedVendor = (details.vendors || []).find(
     (vendor) => vendor.id === safeVendorId
   );
 
@@ -242,6 +254,18 @@ async function assignProductVendor({ sku, vendorId }) {
     );
     error.statusCode = 502;
     throw error;
+  }
+
+  if (!vendorSettings.builtToOrder && Number(assignedVendor.quantity || 0) <= 0) {
+    await catalogService.updateCatalogVendorProductQuantity(
+      assignedVendor.vendorProductId,
+      enabledVendorStockQuantity
+    );
+    clearProductCaches();
+    details = await catalogService.getProductDetails(safeSku);
+    assignedVendor = (details.vendors || []).find(
+      (vendor) => vendor.id === safeVendorId
+    );
   }
 
   return details;
