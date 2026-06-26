@@ -12,6 +12,7 @@ const metafieldNamespace = "custom";
 const availabilityMetafieldKey = "product_availability";
 const availabilityDateMetafieldKey = "product_availability_date";
 const availabilityDateConfirmedMetafieldKey = "availability_date_confirmed";
+const buildToOrderMessageMetafieldKey = "build_to_order_message";
 const availabilityValues = {
   in_stock: "In Stock",
   out_of_stock: "Out of Stock",
@@ -188,6 +189,10 @@ function formatAvailabilityDateTime(value) {
   }
 
   return `${dateText}T13:00:00`;
+}
+
+function normalizeBuildToOrderMessage(value) {
+  return String(value || "").trim();
 }
 
 function formatUserErrors(userErrors) {
@@ -763,6 +768,16 @@ async function getVariantAvailabilityMetafields(variantIds) {
                 type
                 value
               }
+              buildToOrderMessage: metafield(
+                namespace: "custom"
+                key: "build_to_order_message"
+              ) {
+                id
+                key
+                namespace
+                type
+                value
+              }
             }
           }
         }
@@ -782,7 +797,8 @@ async function getVariantAvailabilityMetafields(variantIds) {
         [availabilityMetafieldKey]: node.productAvailability || null,
         [availabilityDateMetafieldKey]: node.productAvailabilityDate || null,
         [availabilityDateConfirmedMetafieldKey]:
-          node.availabilityDateConfirmed || null
+          node.availabilityDateConfirmed || null,
+        [buildToOrderMessageMetafieldKey]: node.buildToOrderMessage || null
       };
     }
   }
@@ -896,8 +912,16 @@ async function updateVariantInventoryPolicy(productId, variants, inventoryPolicy
   return updatedVariants;
 }
 
-function getMetafieldChanges({ ownerIds, availability, followUpDate }) {
+function getMetafieldChanges({
+  ownerIds,
+  availability,
+  buildToOrderMessage,
+  followUpDate
+}) {
   const status = normalizeAvailabilityStatus(availability);
+  const safeBuildToOrderMessage = normalizeBuildToOrderMessage(
+    buildToOrderMessage
+  );
   const safeFollowUpDate = normalizeDateText(followUpDate);
   const metafields = ownerIds.map((ownerId) => ({
     ownerId,
@@ -958,15 +982,40 @@ function getMetafieldChanges({ ownerIds, availability, followUpDate }) {
         value: "false"
       }))
     );
-  } else {
+    deleteKeys.push(buildToOrderMessageMetafieldKey);
+  } else if (status === "built_to_order") {
     deleteKeys.push(
       availabilityDateMetafieldKey,
       availabilityDateConfirmedMetafieldKey
     );
+
+    if (safeBuildToOrderMessage) {
+      metafields.push(
+        ...ownerIds.map((ownerId) => ({
+          ownerId,
+          namespace: metafieldNamespace,
+          key: buildToOrderMessageMetafieldKey,
+          type: "single_line_text_field",
+          value: safeBuildToOrderMessage
+        }))
+      );
+    } else {
+      deleteKeys.push(buildToOrderMessageMetafieldKey);
+    }
+  } else {
+    deleteKeys.push(
+      availabilityDateMetafieldKey,
+      availabilityDateConfirmedMetafieldKey,
+      buildToOrderMessageMetafieldKey
+    );
+  }
+
+  if (status !== "built_to_order") {
+    deleteKeys.push(buildToOrderMessageMetafieldKey);
   }
 
   return {
-    deleteKeys,
+    deleteKeys: Array.from(new Set(deleteKeys)),
     metafields,
     status
   };
@@ -987,6 +1036,7 @@ function getInventoryPolicyForAvailability(status) {
 async function updateProductAvailability({
   sku,
   availability,
+  buildToOrderMessage,
   followUpDate,
   productName
 }) {
@@ -1001,6 +1051,7 @@ async function updateProductAvailability({
   const { deleteKeys, metafields, status } = getMetafieldChanges({
     ownerIds: variantIds,
     availability,
+    buildToOrderMessage,
     followUpDate
   });
   const inventoryPolicy = getInventoryPolicyForAvailability(status);

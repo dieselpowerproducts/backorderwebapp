@@ -288,11 +288,13 @@ export function assignProductVendor({
 
 export function updateShopifyProductAvailability({
   availability,
+  buildToOrderMessage,
   followUpDate,
   productName,
   sku
 }: {
   availability: ShopifyAvailabilityStatus;
+  buildToOrderMessage?: string;
   followUpDate: string;
   productName?: string;
   sku: string;
@@ -302,7 +304,13 @@ export function updateShopifyProductAvailability({
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ availability, followUpDate, productName, sku })
+    body: JSON.stringify({
+      availability,
+      buildToOrderMessage,
+      followUpDate,
+      productName,
+      sku
+    })
   });
 }
 

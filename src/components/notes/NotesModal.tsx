@@ -804,6 +804,23 @@ export function NotesModal({
     return nextProductDetails.followUpDate || "";
   }
 
+  function getShopifyBuildToOrderMessage(
+    nextProductDetails: ProductDetails,
+    availability: ShopifyAvailabilityStatus
+  ) {
+    if (availability !== "built_to_order") {
+      return "";
+    }
+
+    const builtToOrderProductVendor = nextProductDetails.vendors.find(
+      (vendor) => vendor.stockSource === "vendor" && vendor.builtToOrder
+    );
+
+    return String(
+      builtToOrderProductVendor?.buildTime || builtToOrderLeadTime || ""
+    ).trim();
+  }
+
   async function syncShopifyAvailabilityFromDetails(
     nextProductDetails: ProductDetails,
     options: {
@@ -822,6 +839,10 @@ export function NotesModal({
       const result = await updateShopifyProductAvailability({
         sku: nextProductDetails.sku,
         availability,
+        buildToOrderMessage: getShopifyBuildToOrderMessage(
+          nextProductDetails,
+          availability
+        ),
         followUpDate: getShopifyFollowUpDate(nextProductDetails, availability),
         productName: nextProductDetails.name || ""
       });
@@ -1616,6 +1637,10 @@ export function NotesModal({
       const result = await updateShopifyProductAvailability({
         sku,
         availability,
+        buildToOrderMessage: getShopifyBuildToOrderMessage(
+          detailsForShopify,
+          availability
+        ),
         followUpDate: getShopifyFollowUpDate(detailsForShopify, availability),
         productName: detailsForShopify.name || ""
       });
