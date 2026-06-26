@@ -816,9 +816,13 @@ export function NotesModal({
       (vendor) => vendor.stockSource === "vendor" && vendor.builtToOrder
     );
 
-    return String(
+    const buildToOrderTime = String(
       builtToOrderProductVendor?.buildTime || builtToOrderLeadTime || ""
     ).trim();
+
+    return buildToOrderTime
+      ? `This product will ship in ${buildToOrderTime} from the manufacturer`
+      : "";
   }
 
   async function syncShopifyAvailabilityFromDetails(
